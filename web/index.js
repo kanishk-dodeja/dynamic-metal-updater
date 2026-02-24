@@ -180,6 +180,31 @@ app.get(shopify.config.auth.path, shopify.auth.begin());
 app.get(
   shopify.config.auth.callbackPath,
   shopify.auth.callback(),
+  async (req, res, next) => {
+    const session = res.locals.shopify.session;
+    const shop = session.shop;
+
+    try {
+      // 1. Create default settings if they don't exist
+      await prisma.merchantSettings.upsert({
+        where: { shop },
+        update: {},
+        create: {
+          shop,
+          goldApiKey: process.env.GOLD_API_KEY || "",
+          markupPercentage: 0,
+        },
+      });
+
+      // 2. Ensure metafields are defined immediately
+      const client = new shopify.api.clients.Graphql({ session });
+      await shopifyService.ensureMetafieldDefinitions(client);
+    } catch (error) {
+      console.error(`Error in post-auth setup for ${shop}:`, error);
+    }
+
+    next();
+  },
   shopify.redirectToShopifyOrAppRoot()
 );
 
@@ -224,7 +249,7 @@ app.post("/api/settings", async (req, res) => {
 });
 
 app.get("/api/settings", async (req, res) => {
-  const { shop } = req.query;
+  const shop = res.locals.shopify.session.shop;
 
   try {
     const settings = await prisma.merchantSettings.findUnique({
@@ -262,7 +287,7 @@ app.get("/api/settings", async (req, res) => {
 });
 
 app.post("/api/sync", async (req, res) => {
-  const { shop } = req.body;
+  const shop = res.locals.shopify.session.shop;
 
   if (!shop) {
     return res.status(400).json({ error: "Missing shop parameter" });
@@ -328,7 +353,7 @@ app.post("/api/sync", async (req, res) => {
 });
 
 app.get("/api/logs", async (req, res) => {
-  const { shop } = req.query;
+  const shop = res.locals.shopify.session.shop;
 
   if (!shop) {
     return res.status(400).json({ error: "Missing shop parameter" });

@@ -343,18 +343,18 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
       const { productVariantsBulkUpdate } = response.body.data;
       if (!productVariantsBulkUpdate) {
         console.error(`[ERROR] Bulk update data missing in batch ${j + 1}`);
-        return false;
+        continue; // Try next batch instead of failing entirely
       }
 
       const { userErrors } = productVariantsBulkUpdate;
       if (Array.isArray(userErrors) && userErrors.length > 0) {
-        console.error(`[ERROR] Batch ${j + 1} failed with ${userErrors.length} error(s)`);
+        console.error(`[ERROR] Batch ${j + 1} had ${userErrors.length} error(s)`);
         userErrors.forEach((err) => console.error(`  - ${err.field}: ${err.message}`));
-        return false;
+        // We continue to next batch even if this one had errors
       }
     }
 
-    console.log(`[SUCCESS] Successfully updated all ${mutations.length} variant(s)`);
+    console.log(`[INFO] Completed processing all ${chunks.length} batch(es)`);
     return true;
   } catch (error) {
     console.error(`[ERROR] Exception in bulkUpdateVariants: ${error.message}`);
