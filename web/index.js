@@ -302,7 +302,8 @@ app.post("/api/sync", async (req, res) => {
     const { success, itemsUpdated } = await updatePricesForShop(
       client,
       merchant.markupPercentage,
-      merchant.storeCurrency
+      merchant.storeCurrency,
+      merchant.goldApiKey
     );
 
     if (syncLog) {
@@ -363,7 +364,8 @@ async function runPriceUpdateJob() {
         await updatePricesForShop(
           client,
           merchant.markupPercentage,
-          merchant.storeCurrency
+          merchant.storeCurrency,
+          merchant.goldApiKey
         );
       } catch (error) {
         console.error(`Error processing shop ${merchant.shop}:`, error);

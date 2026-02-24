@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
@@ -6,10 +6,10 @@ WORKDIR /app
 COPY . .
 
 # Install root dependencies
-RUN npm install --legacy-peer-deps
+RUN npm install
 
 # Install web dependencies and build frontend
-RUN cd web && npm install --legacy-peer-deps && cd frontend && npm install --legacy-peer-deps && npm run build
+RUN cd web && npm install && cd frontend && npm install && npm run build
 
 # Generate Prisma Client (Critical for database interaction)
 RUN cd web && npx prisma generate --schema ../prisma/schema.prisma

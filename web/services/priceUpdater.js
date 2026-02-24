@@ -362,7 +362,7 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
   }
 }
 
-async function updatePricesForShop(client, globalMarkup, currency = 'USD', isDryRun = false) {
+async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldApiKey = null, isDryRun = false) {
   try {
     if (!client || typeof client.graphql !== 'function') {
       console.error('Invalid GraphQL client provided to updatePricesForShop');
@@ -383,7 +383,7 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', isDry
     const metalPrices = {};
 
     for (const metalCode of ['XAU', 'XAG', 'XPT']) {
-      const pricePerGram = await getPricePerGram(metalCode, currency);
+      const pricePerGram = await getPricePerGram(metalCode, currency, goldApiKey);
       if (pricePerGram !== null && typeof pricePerGram === 'number') {
         metalPrices[metalCode] = pricePerGram;
       }

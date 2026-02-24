@@ -78,7 +78,7 @@ async function main() {
   });
 
   // Create GraphQL client
-  const client = new shopify.clients.Graphql({
+  const client = new shopify.api.clients.Graphql({
     session,
   });
 
@@ -109,7 +109,13 @@ async function main() {
   console.log('[DEBUG-TRIGGER] Running price updater in DRY-RUN mode...');
   console.log('================================================================================');
 
-  const success = await updatePricesForShop(client, markupPercentage, true);
+  const success = await updatePricesForShop(
+    client,
+    markupPercentage,
+    merchantSettings.storeCurrency,
+    merchantSettings.goldApiKey,
+    true
+  );
 
   console.log('================================================================================');
 
