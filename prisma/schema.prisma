@@ -1,0 +1,34 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id         String  @primary
+  shop       String
+  state      String
+  isOnline   Boolean @default(false)
+  accessToken String
+  scope      String?
+  expires    DateTime?
+  userId     BigInt?
+
+  @@unique([shop, isOnline])
+}
+
+model MerchantSettings {
+  id                String  @id @default(cuid())
+  shop              String  @unique
+  goldApiKey        String
+  markupPercentage  Float   @default(0)
+  isCronActive      Boolean @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}

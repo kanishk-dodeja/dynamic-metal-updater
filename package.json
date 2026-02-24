@@ -1,0 +1,16 @@
+{
+  "name": "dynamic-metal-price-updater-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "cd web && npm install && npm run build",
+    "start": "node web/index.js"
+  },
+  "workspaces": [
+    "web"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "UNLICENSED"
+}
