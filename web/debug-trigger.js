@@ -3,11 +3,12 @@
  * Or with environment override: SHOP=myshop.myshopify.com node web/debug-trigger.js
  */
 
-require('dotenv').config();
-const { PrismaClient } = require('@prisma/client');
-const { shopifyApp } = require('@shopify/shopify-api');
-const { SQLiteSessionStorage } = require('@shopify/shopify-api/adapters/sqlite');
-const { updatePricesForShop } = require('./services/priceUpdater.js');
+import 'dotenv/config';
+import { PrismaClient } from '@prisma/client';
+import { shopifyApp } from '@shopify/shopify-app-express';
+import { ApiVersion } from '@shopify/shopify-api';
+import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
+import { updatePricesForShop } from './services/priceUpdater.js';
 
 const prisma = new PrismaClient();
 
@@ -65,14 +66,15 @@ async function main() {
 
   // Initialize Shopify app
   const shopify = shopifyApp({
-    apiKey: process.env.SHOPIFY_API_KEY,
-    apiSecret: process.env.SHOPIFY_API_SECRET,
-    scopes: (process.env.SCOPES || 'write_products,read_products').split(','),
-    host: process.env.SHOPIFY_APP_URL,
-    isEmbeddedApp: false,
-    sessionStorage: new SQLiteSessionStorage({
-      db: prisma.$client,
-    }),
+    api: {
+      apiKey: process.env.SHOPIFY_API_KEY,
+      apiSecretKey: process.env.SHOPIFY_API_SECRET,
+      scopes: (process.env.SCOPES || 'write_products,read_products').split(','),
+      hostName: process.env.SHOPIFY_APP_URL?.replace(/https?:\/\//, ""),
+      apiVersion: ApiVersion.October24,
+      isEmbeddedApp: false,
+    },
+    sessionStorage: new PrismaSessionStorage(prisma),
   });
 
   // Create GraphQL client

@@ -1,4 +1,4 @@
-const { getPricePerGram } = require('./metalService');
+import { getPricePerGram } from './metalService.js';
 
 const METAL_MAX_PURITY = {
   XAU: 24,
@@ -171,12 +171,12 @@ function calculateVariantPrice(
   }
 
   const maxPurity = METAL_MAX_PURITY[metalCode] || 24;
-  const finalPrice =
-    pricePerGram * (metalPurity / maxPurity) * metalWeight + makingCharge + globalMarkup;
+  const basePrice = pricePerGram * (metalPurity / maxPurity) * metalWeight;
+  const finalPrice = (basePrice + makingCharge) * (1 + globalMarkup / 100);
 
   if (!Number.isFinite(finalPrice) || finalPrice < 0) {
     console.error(
-      `Calculation resulted in invalid price: ${finalPrice} (metalCode: ${metalCode}, purity: ${metalPurity}, weight: ${metalWeight}, making: ${makingCharge}, pricePerGram: ${pricePerGram}, markup: ${globalMarkup})`,
+      `Calculation resulted in invalid price: ${finalPrice} (metalCode: ${metalCode}, purity: ${metalPurity}, weight: ${metalWeight}, making: ${makingCharge}, pricePerGram: ${pricePerGram}, markup: ${globalMarkup}%)`,
     );
     return null;
   }
@@ -222,56 +222,37 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup) {
     const metalWeight = productMetafields.weight_grams;
     const makingCharge = productMetafields.making_charge ?? 0;
 
-    if (!metalType || metalType === '') {
-      console.warn(`[SKIP] Product ${product.id}: missing metal_type metafield`);
-      skippedProducts.push(product.id);
-      continue;
-    }
-
-    if (
-      metalPurity === null ||
-      metalPurity === undefined ||
-      typeof metalPurity !== 'number'
-    ) {
-      console.warn(`[SKIP] Product ${product.id}: invalid or missing metal_purity metafield`);
-      skippedProducts.push(product.id);
-      continue;
-    }
-
-    if (
-      metalWeight === null ||
-      metalWeight === undefined ||
-      typeof metalWeight !== 'number'
-    ) {
-      console.warn(`[SKIP] Product ${product.id}: invalid or missing weight_grams metafield`);
-      skippedProducts.push(product.id);
-      continue;
-    }
-
-    const pricePerGram = metalPrices[metalType];
-    if (pricePerGram === null || pricePerGram === undefined || typeof pricePerGram !== 'number') {
-      console.warn(`[SKIP] Product ${product.id}: no price data available for metal ${metalType}`);
-      skippedProducts.push(product.id);
-      continue;
-    }
-
-    if (!product.variants || !Array.isArray(product.variants.edges)) {
-      console.warn(`[SKIP] Product ${product.id}: no variants found`);
-      skippedProducts.push(product.id);
-      continue;
-    }
-
     for (const variantEdge of product.variants.edges) {
       if (!variantEdge || !variantEdge.node || !variantEdge.node.id) {
         console.warn(`[SKIP] Product ${product.id}: malformed variant edge`);
         continue;
       }
 
+      const variantNode = variantEdge.node;
+      const variantMetafields = parseMetafields(variantNode.metafields);
+
+      // Hierarchy: Use variant-specific value if available, otherwise fall back to product-level
+      const finalMetalType = variantMetafields.metal_type || metalType;
+      const finalMetalPurity = variantMetafields.metal_purity ?? metalPurity;
+      const finalMetalWeight = variantMetafields.weight_grams ?? metalWeight;
+      const finalMakingCharge = variantMetafields.making_charge ?? makingCharge;
+
+      if (!finalMetalType) {
+        console.warn(`[SKIP] Variant ${variantNode.id}: missing metal_type`);
+        continue;
+      }
+
+      const pricePerGram = metalPrices[finalMetalType];
+      if (pricePerGram === null || pricePerGram === undefined || typeof pricePerGram !== 'number') {
+        console.warn(`[SKIP] Variant ${variantNode.id}: no price data for ${finalMetalType}`);
+        continue;
+      }
+
       const newPrice = calculateVariantPrice(
-        metalType,
-        metalPurity,
-        metalWeight,
-        makingCharge,
+        finalMetalType,
+        finalMetalPurity,
+        finalMetalWeight,
+        finalMakingCharge,
         pricePerGram,
         globalMarkup,
       );
@@ -337,49 +318,55 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
       return false;
     }
 
-    const response = await client.graphql(query, {
-      variables: { input: mutations },
-    });
-
-    if (!response || !response.body || !response.body.data) {
-      console.error('Malformed GraphQL response from productVariantsBulkUpdate');
-      return false;
+    // Shopify limits bulk updates to 250 records per call, but 100 is safer for performance
+    const CHUNK_SIZE = 100;
+    const chunks = [];
+    for (let i = 0; i < mutations.length; i += CHUNK_SIZE) {
+      chunks.push(mutations.slice(i, i + CHUNK_SIZE));
     }
 
-    const { productVariantsBulkUpdate } = response.body.data;
+    console.log(`[INFO] Processing ${chunks.length} batch(es) for ${mutations.length} variant(s)...`);
 
-    if (!productVariantsBulkUpdate) {
-      console.error('productVariantsBulkUpdate did not return expected data');
-      return false;
-    }
+    for (let j = 0; j < chunks.length; j += 1) {
+      const chunk = chunks[j];
+      console.log(`[INFO] Updating batch ${j + 1}/${chunks.length} (${chunk.length} items)...`);
 
-    const { userErrors } = productVariantsBulkUpdate;
-
-    if (Array.isArray(userErrors) && userErrors.length > 0) {
-      console.error(
-        `[ERROR] Bulk update completed with ${userErrors.length} error(s):`,
-      );
-      userErrors.forEach((err) => {
-        console.error(`  - Field: ${err.field}, Message: ${err.message}`);
+      const response = await client.graphql(query, {
+        variables: { input: chunk },
       });
-      return false;
+
+      if (!response || !response.body || !response.body.data) {
+        console.error(`[ERROR] Malformed GraphQL response in batch ${j + 1}`);
+        return false;
+      }
+
+      const { productVariantsBulkUpdate } = response.body.data;
+      if (!productVariantsBulkUpdate) {
+        console.error(`[ERROR] Bulk update data missing in batch ${j + 1}`);
+        return false;
+      }
+
+      const { userErrors } = productVariantsBulkUpdate;
+      if (Array.isArray(userErrors) && userErrors.length > 0) {
+        console.error(`[ERROR] Batch ${j + 1} failed with ${userErrors.length} error(s)`);
+        userErrors.forEach((err) => console.error(`  - ${err.field}: ${err.message}`));
+        return false;
+      }
     }
 
-    console.log(`[SUCCESS] Successfully updated ${mutations.length} variant(s)`);
+    console.log(`[SUCCESS] Successfully updated all ${mutations.length} variant(s)`);
     return true;
   } catch (error) {
-    console.error(
-      `[ERROR] Exception in bulkUpdateVariants: ${error.message}`,
-    );
+    console.error(`[ERROR] Exception in bulkUpdateVariants: ${error.message}`);
     return false;
   }
 }
 
-async function updatePricesForShop(client, globalMarkup, isDryRun = false) {
+async function updatePricesForShop(client, globalMarkup, currency = 'USD', isDryRun = false) {
   try {
     if (!client || typeof client.graphql !== 'function') {
       console.error('Invalid GraphQL client provided to updatePricesForShop');
-      return false;
+      return { success: false, itemsUpdated: 0 };
     }
 
     if (
@@ -390,25 +377,25 @@ async function updatePricesForShop(client, globalMarkup, isDryRun = false) {
       console.error(
         `Invalid globalMarkup provided: ${globalMarkup} (must be a number)`,
       );
-      return false;
+      return { success: false, itemsUpdated: 0 };
     }
 
     const metalPrices = {};
 
     for (const metalCode of ['XAU', 'XAG', 'XPT']) {
-      const pricePerGram = await getPricePerGram(metalCode);
+      const pricePerGram = await getPricePerGram(metalCode, currency);
       if (pricePerGram !== null && typeof pricePerGram === 'number') {
         metalPrices[metalCode] = pricePerGram;
       }
     }
 
     if (Object.keys(metalPrices).length === 0) {
-      console.error('[ERROR] Failed to fetch any metal prices');
-      return false;
+      console.error(`[ERROR] Failed to fetch any metal prices for currency ${currency}`);
+      return { success: false, itemsUpdated: 0 };
     }
 
     console.log(
-      `[INFO] Successfully fetched prices for metals: ${Object.keys(metalPrices).join(', ')}`,
+      `[INFO] Successfully fetched prices for metals in ${currency}: ${Object.keys(metalPrices).join(', ')}`,
     );
 
     let allProducts = [];
@@ -422,12 +409,12 @@ async function updatePricesForShop(client, globalMarkup, isDryRun = false) {
 
       if (!pageData) {
         console.error('[ERROR] Failed to fetch tagged products');
-        return false;
+        return { success: false, itemsUpdated: 0 };
       }
 
       if (!pageData.edges || !Array.isArray(pageData.edges)) {
         console.error('[ERROR] Malformed pageData response');
-        return false;
+        return { success: false, itemsUpdated: 0 };
       }
 
       allProducts = allProducts.concat(pageData.edges.map((e) => e.node));
@@ -444,13 +431,13 @@ async function updatePricesForShop(client, globalMarkup, isDryRun = false) {
 
     const success = await bulkUpdateVariants(client, mutations, isDryRun);
 
-    return success;
+    return { success, itemsUpdated: mutations.length };
   } catch (error) {
     console.error(`[ERROR] Exception in updatePricesForShop: ${error.message}`);
-    return false;
+    return { success: false, itemsUpdated: 0 };
   }
 }
 
-module.exports = {
+export {
   updatePricesForShop,
 };

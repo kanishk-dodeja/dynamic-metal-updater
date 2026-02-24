@@ -1,9 +1,9 @@
-const axios = require('axios');
+import axios from 'axios';
 
 const GOLD_API_BASE = 'https://www.goldapi.io/api';
 const AXIOS_TIMEOUT = 5000;
 
-async function fetchMetalPrice(metalCode) {
+async function fetchMetalPrice(metalCode, currency = 'USD') {
   try {
     const apiKey = process.env.GOLD_API_KEY;
     if (!apiKey || typeof apiKey !== 'string') {
@@ -22,7 +22,7 @@ async function fetchMetalPrice(metalCode) {
       };
     }
 
-    const response = await axios.get(`${GOLD_API_BASE}/${metalCode}/USD`, {
+    const response = await axios.get(`${GOLD_API_BASE}/${metalCode}/${currency}`, {
       headers: {
         'x-access-token': apiKey,
       },
@@ -66,7 +66,7 @@ async function fetchMetalPrice(metalCode) {
       data: {
         metalCode: data.metal || metalCode,
         pricePerOunce: data.price,
-        currency: data.currency || 'USD',
+        currency: data.currency || currency,
         timestamp: data.timestamp,
       },
     };
@@ -96,13 +96,13 @@ async function fetchMetalPrice(metalCode) {
   }
 }
 
-async function getPricePerGram(metalCode) {
+async function getPricePerGram(metalCode, currency = 'USD') {
   const troyOunceToGram = 31.1035;
 
-  const result = await fetchMetalPrice(metalCode);
+  const result = await fetchMetalPrice(metalCode, currency);
 
   if (!result.success) {
-    console.warn(`getPricePerGram skipped for ${metalCode}: ${result.error}`);
+    console.warn(`getPricePerGram skipped for ${metalCode} (${currency}): ${result.error}`);
     return null;
   }
 
@@ -118,7 +118,7 @@ async function getPricePerGram(metalCode) {
   return pricePerGram;
 }
 
-module.exports = {
+export {
   fetchMetalPrice,
   getPricePerGram,
 };
