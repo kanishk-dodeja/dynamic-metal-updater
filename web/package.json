@@ -9,15 +9,15 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "^6.0.0",
     "@shopify/shopify-api": "^12.3.0",
     "@shopify/shopify-app-express": "^6.0.5",
     "axios": "^1.13.5",
     "express": "^4.22.1",
     "node-cron": "^3.0.3",
     "node-fetch": "^3.3.2",
-    "prisma": "^5.22.0",
-    "@shopify/shopify-app-session-storage-prisma": "^5.1.5",
+    "prisma": "^6.0.0",
+    "@shopify/shopify-app-session-storage-prisma": "^6.0.0",
     "dotenv": "^16.4.5",
     "sqlite3": "^5.1.6"
   },
