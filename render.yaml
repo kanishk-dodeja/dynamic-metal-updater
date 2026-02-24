@@ -3,6 +3,7 @@ services:
     name: dynamic-metal-updater
     env: docker
     plan: free
+    healthCheckPath: /api/debug/health
     dockerCommand: npm start
     envVars:
       - key: SHOPIFY_API_KEY
