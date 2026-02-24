@@ -1,16 +1,18 @@
 FROM node:18-alpine
 
 WORKDIR /app
+
+# Copy the entire project
 COPY . .
 
 # Install root dependencies
 RUN npm install
 
-# Install and build frontend manually to avoid loops
+# Install web dependencies and build frontend
 RUN cd web && npm install && cd frontend && npm install && npm run build
 
-# Install backend dependencies
-RUN cd web && npm install
+# Generate Prisma Client (Critical for database interaction)
+RUN cd web && npx prisma generate --schema ../prisma/schema.prisma
 
 EXPOSE 3000
 
