@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "build": "cd web && npm install && npm run build",
+    "build": "npm install --prefix web && npm run build --prefix web",
     "start": "node web/index.js"
   },
   "workspaces": [
