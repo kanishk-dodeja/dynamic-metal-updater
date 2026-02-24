@@ -200,16 +200,18 @@ app.post("/api/settings", async (req, res) => {
     return res.status(400).json({ error: "goldApiKey is required" });
   }
 
+  const trimmedApiKey = goldApiKey.trim();
+
   try {
     const settings = await prisma.merchantSettings.upsert({
       where: { shop },
       update: {
-        goldApiKey,
+        goldApiKey: trimmedApiKey,
         markupPercentage,
       },
       create: {
         shop,
-        goldApiKey,
+        goldApiKey: trimmedApiKey,
         markupPercentage,
       },
     });
@@ -360,13 +362,39 @@ async function runPriceUpdateJob() {
 
         const client = new shopify.api.clients.Graphql({ session });
 
+        // Create log entry for cron sync
+        let syncLog;
+        try {
+          syncLog = await prisma.syncLog.create({
+            data: {
+              shop: merchant.shop,
+              status: "IN_PROGRESS",
+              message: "Automated cron sync started",
+            }
+          });
+        } catch (e) {
+          console.warn(`[CRON] Could not create sync log for ${merchant.shop}`);
+        }
+
         // Sync logic
-        await updatePricesForShop(
+        const { success, itemsUpdated } = await updatePricesForShop(
           client,
           merchant.markupPercentage,
           merchant.storeCurrency,
           merchant.goldApiKey
         );
+
+        if (syncLog) {
+          await prisma.syncLog.update({
+            where: { id: syncLog.id },
+            data: {
+              status: success ? "SUCCESS" : "FAILED",
+              message: success ? "Automated sync completed" : "Automated sync failed",
+              itemsUpdated,
+              completedAt: new Date(),
+            }
+          });
+        }
       } catch (error) {
         console.error(`Error processing shop ${merchant.shop}:`, error);
       }
