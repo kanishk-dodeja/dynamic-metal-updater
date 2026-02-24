@@ -3,12 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "build": "npm install --prefix web && npm install --prefix web/frontend && npm run build --prefix web/frontend",
+    "build": "cd web && npm install && cd frontend && npm install && npm run build",
     "start": "node web/index.js"
   },
-  "workspaces": [
-    "web"
-  ],
   "engines": {
     "node": ">=18.0.0"
   },
