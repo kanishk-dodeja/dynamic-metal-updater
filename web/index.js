@@ -36,7 +36,7 @@ const shopify = shopifyApp({
     apiSecretKey: process.env.SHOPIFY_API_SECRET,
     scopes: process.env.SCOPES?.split(","),
     hostName: process.env.SHOPIFY_APP_URL?.replace(/https?:\/\//, ""),
-    apiVersion: ApiVersion.October24,
+    apiVersion: ApiVersion.July24,
     isEmbeddedApp: false,
   },
   sessionStorage: new PrismaSessionStorage(prisma),

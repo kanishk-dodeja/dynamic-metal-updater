@@ -7,18 +7,27 @@ services:
     dockerCommand: npm start
     envVars:
       - key: SHOPIFY_API_KEY
+        description: Shopify App API Key
         sync: false
       - key: SHOPIFY_API_SECRET
+        description: Shopify App API Secret
         sync: false
       - key: SHOPIFY_APP_URL
+        description: The public URL of your app (https://...)
         sync: false
       - key: SCOPES
+        description: Required Shopify API scopes
         value: "write_products,read_products"
       - key: DATABASE_URL
+        description: Supabase PostgreSQL Connection String
         sync: false
       - key: GOLD_API_KEY
+        description: API Key from GoldAPI.io
         sync: false
       - key: ENCRYPTION_KEY
+        description: Random string to encrypt session data
         sync: false
       - key: NODE_ENV
         value: "production"
+      - key: NODE_VERSION
+        value: "20"
