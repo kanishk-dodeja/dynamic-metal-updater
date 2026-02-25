@@ -11,8 +11,8 @@ RUN npm install --legacy-peer-deps
 # Install web dependencies
 RUN cd web && npm install --legacy-peer-deps
 
-# Generate Prisma Client (Critical for database interaction)
-RUN cd web && npx prisma generate --schema ../prisma/schema.prisma
+# Generate Prisma Client into web/node_modules (configured in schema.prisma output)
+RUN npx prisma generate --schema prisma/schema.prisma
 
 EXPOSE 3000
 
