@@ -5,8 +5,11 @@ const AXIOS_TIMEOUT = 5000;
 
 async function fetchMetalPrice(metalCode, currency = 'USD', apiKey = null) {
   try {
-    const finalApiKey = apiKey || process.env.GOLD_API_KEY;
-    if (!finalApiKey || typeof finalApiKey !== 'string') {
+    let finalApiKey = (apiKey || process.env.GOLD_API_KEY || "").trim();
+    // Remove potential surrounding quotes if the user pasted them in Render
+    finalApiKey = finalApiKey.replace(/^["'](.+)["']$/, '$1');
+
+    if (!finalApiKey) {
       console.error('Gold API Key not provided and GOLD_API_KEY not configured');
       return {
         success: false,
