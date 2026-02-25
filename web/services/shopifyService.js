@@ -1,4 +1,5 @@
 const METAFIELD_DEFINITIONS = [
+  // Product-level definitions
   {
     name: "Metal Type",
     namespace: "custom",
@@ -30,19 +31,50 @@ const METAFIELD_DEFINITIONS = [
     description: "Fixed making charge for this item",
     type: "number_decimal",
     ownerType: "PRODUCT"
+  },
+  // Variant-level definitions (for hierarchy fallback)
+  {
+    name: "Variant Metal Type",
+    namespace: "custom",
+    key: "metal_type",
+    description: "Variant specific metal override",
+    type: "single_line_text_field",
+    ownerType: "PRODUCTVARIANT"
+  },
+  {
+    name: "Variant Metal Purity",
+    namespace: "custom",
+    key: "metal_purity",
+    description: "Variant specific purity override",
+    type: "number_decimal",
+    ownerType: "PRODUCTVARIANT"
+  },
+  {
+    name: "Variant Weight Grams",
+    namespace: "custom",
+    key: "weight_grams",
+    description: "Variant specific weight override",
+    type: "number_decimal",
+    ownerType: "PRODUCTVARIANT"
+  },
+  {
+    name: "Variant Making Charge",
+    namespace: "custom",
+    key: "making_charge",
+    description: "Variant specific making charge override",
+    type: "number_decimal",
+    ownerType: "PRODUCTVARIANT"
   }
 ];
 
 async function ensureMetafieldDefinitions(client) {
   const query = `
     query GetMetafieldDefinitions {
-      metafieldDefinitions(first: 250, ownerType: PRODUCT) {
-        edges {
-          node {
-            key
-            namespace
-          }
-        }
+      productDefs: metafieldDefinitions(first: 250, ownerType: PRODUCT) {
+        edges { node { key namespace ownerType } }
+      }
+      variantDefs: metafieldDefinitions(first: 250, ownerType: PRODUCTVARIANT) {
+        edges { node { key namespace ownerType } }
       }
     }
   `;
@@ -64,20 +96,26 @@ async function ensureMetafieldDefinitions(client) {
 
   try {
     const response = await client.graphql(query);
-    const existingDefinitions = response.body.data.metafieldDefinitions.edges.map(e => e.node);
+    const existingProductDefs = response.body.data.productDefs.edges.map(e => e.node);
+    const existingVariantDefs = response.body.data.variantDefs.edges.map(e => e.node);
+    const existingDefinitions = [...existingProductDefs, ...existingVariantDefs];
 
     for (const def of METAFIELD_DEFINITIONS) {
-      const exists = existingDefinitions.find(ed => ed.key === def.key && ed.namespace === def.namespace);
+      const exists = existingDefinitions.find(ed =>
+        ed.key === def.key &&
+        ed.namespace === def.namespace &&
+        ed.ownerType === def.ownerType
+      );
 
       if (!exists) {
-        console.log(`Creating metafield definition: ${def.namespace}.${def.key}`);
+        console.log(`Creating metafield definition: ${def.namespace}.${def.key} (${def.ownerType})`);
         const createResponse = await client.graphql(mutation, {
           variables: { definition: def }
         });
 
         const errors = createResponse.body.data.metafieldDefinitionCreate.userErrors;
         if (errors && errors.length > 0) {
-          console.error(`Failed to create metafield definition ${def.key}:`, errors);
+          console.error(`Failed to create metafield definition ${def.key} (${def.ownerType}):`, errors);
         }
       }
     }

@@ -286,7 +286,7 @@ app.post("/api/sync", async (req, res) => {
     });
 
     if (!merchant) {
-      return res.status(404).json({ error: "Merchant not found" });
+      return res.status(404).json({ error: "Merchant settings not found. Please save settings first." });
     }
 
     const session = await prisma.session.findFirst({
@@ -310,10 +310,10 @@ app.post("/api/sync", async (req, res) => {
         }
       });
     } catch (e) {
-      console.warn("Could not create sync log, migration probably not run yet");
+      console.warn("Could not create sync log, skipping log step:", e.message);
     }
 
-    const { success, itemsUpdated } = await updatePricesForShop(
+    const result = await updatePricesForShop(
       client,
       merchant.markupPercentage,
       merchant.storeCurrency,
@@ -321,18 +321,22 @@ app.post("/api/sync", async (req, res) => {
     );
 
     if (syncLog) {
-      await prisma.syncLog.update({
-        where: { id: syncLog.id },
-        data: {
-          status: success ? "SUCCESS" : "FAILED",
-          message: success ? "Sync completed successfully" : "Sync failed during update",
-          itemsUpdated,
-          completedAt: new Date(),
-        }
-      });
+      try {
+        await prisma.syncLog.update({
+          where: { id: syncLog.id },
+          data: {
+            status: result.success ? "SUCCESS" : "FAILED",
+            message: result.success ? "Sync completed successfully" : "Sync failed during update",
+            itemsUpdated: result.itemsUpdated,
+            completedAt: new Date(),
+          }
+        });
+      } catch (logUpdateError) {
+        console.warn("Could not update sync log:", logUpdateError.message);
+      }
     }
 
-    res.json({ success, itemsUpdated });
+    res.json(result);
   } catch (error) {
     console.error("Error during manual sync:", error);
     res.status(500).json({ error: error.message });
@@ -389,7 +393,7 @@ async function runPriceUpdateJob() {
         }
 
         // Sync logic
-        const { success, itemsUpdated } = await updatePricesForShop(
+        const result = await updatePricesForShop(
           client,
           merchant.markupPercentage,
           merchant.storeCurrency,
@@ -397,15 +401,19 @@ async function runPriceUpdateJob() {
         );
 
         if (syncLog) {
-          await prisma.syncLog.update({
-            where: { id: syncLog.id },
-            data: {
-              status: success ? "SUCCESS" : "FAILED",
-              message: success ? "Automated sync completed" : "Automated sync failed",
-              itemsUpdated,
-              completedAt: new Date(),
-            }
-          });
+          try {
+            await prisma.syncLog.update({
+              where: { id: syncLog.id },
+              data: {
+                status: result.success ? "SUCCESS" : "FAILED",
+                message: result.success ? "Automated sync completed" : "Automated sync failed",
+                itemsUpdated: result.itemsUpdated,
+                completedAt: new Date(),
+              }
+            });
+          } catch (logUpdateError) {
+            console.warn(`[CRON] Could not update sync log for ${merchant.shop}:`, logUpdateError.message);
+          }
         }
       } catch (error) {
         console.error(`Error processing shop ${merchant.shop}:`, error);
