@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
-    "@shopify/shopify-api": "11.6.0",
-    "@shopify/shopify-app-express": "5.1.1",
+    "@shopify/shopify-api": "11.14.1",
+    "@shopify/shopify-app-express": "5.0.20",
     "axios": "^1.13.5",
     "express": "^4.22.1",
     "node-cron": "^3.0.3",
