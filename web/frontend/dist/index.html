@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metal Price Updater | Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    :root {
+      --bg-primary: #0f1117;
+      --bg-card: #1a1d27;
+      --bg-input: #252836;
+      --border: #2e3241;
+      --text-primary: #e4e6f0;
+      --text-secondary: #8b8fa3;
+      --accent: #6c5ce7;
+      --accent-hover: #7f71ef;
+      --success: #00d68f;
+      --warning: #ffaa00;
+      --danger: #ff6b6b;
+      --gold: #ffd700;
+      --radius: 12px;
+    }
+
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .container { max-width: 900px; margin: 0 auto; }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-icon {
+      width: 48px; height: 48px;
+      background: linear-gradient(135deg, var(--gold), #e6a800);
+      border-radius: var(--radius);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+    }
+
+    .header h1 { font-size: 22px; font-weight: 700; }
+    .header p { color: var(--text-secondary); font-size: 14px; margin-top: 2px; }
+
+    .status-banner {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .status-dot.degraded { background: var(--warning); }
+    .status-dot.error { background: var(--danger); }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+
+    .card h2 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .price-display {
+      font-size: 36px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--gold), #ffed4a);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .price-meta { color: var(--text-secondary); font-size: 13px; margin-top: 4px; }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    input[type="text"], input[type="number"], input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 14px;
+    }
+
+    input:focus { border-color: var(--accent); }
+
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+    .btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .btn-success {
+      background: var(--success);
+      color: #0f1117;
+    }
+    .btn-success:hover { opacity: 0.9; }
+    .btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-block { width: 100%; justify-content: center; }
+
+    .log-list { list-style: none; }
+
+    .log-item {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .log-item:last-child { border-bottom: none; }
+
+    .log-status {
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .log-status.success { background: rgba(0, 214, 143, 0.15); color: var(--success); }
+    .log-status.failed { background: rgba(255, 107, 107, 0.15); color: var(--danger); }
+    .log-status.in-progress { background: rgba(255, 170, 0, 0.15); color: var(--warning); }
+
+    .log-info { color: var(--text-secondary); }
+
+    .empty-state {
+      text-align: center;
+      padding: 32px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 14px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      color: white;
+      display: none;
+      z-index: 100;
+      animation: slideIn 0.3s ease;
+    }
+
+    .toast.success { background: var(--success); color: #0f1117; display: block; }
+    .toast.error { background: var(--danger); display: block; }
+
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .section-full { grid-column: 1 / -1; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-icon">💎</div>
+      <div>
+        <h1>Metal Price Updater</h1>
+        <p>Automated precious metal pricing for your Shopify store</p>
+      </div>
+    </div>
+
+    <div class="status-banner" id="statusBanner">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Connecting to services...</span>
+    </div>
+
+    <div class="grid">
+      <!-- Live Gold Price -->
+      <div class="card">
+        <h2>📊 Live Gold Price</h2>
+        <div class="price-display" id="goldPrice">--</div>
+        <div class="price-meta" id="priceMeta">Fetching latest price...</div>
+      </div>
+
+      <!-- Quick Sync -->
+      <div class="card">
+        <h2>⚡ Price Sync</h2>
+        <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">
+          Sync all product prices with the latest metal rates right now.
+        </p>
+        <button class="btn btn-success btn-block" id="syncBtn" onclick="syncPrices()">
+          🔄 Sync Prices Now
+        </button>
+        <p style="color: var(--text-secondary); font-size: 12px; margin-top: 10px; text-align: center;">
+          Auto-sync runs every 6 hours
+        </p>
+      </div>
+
+      <!-- Settings -->
+      <div class="card section-full">
+        <h2>⚙️ Settings</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div>
+            <label for="apiKey">GoldAPI Key</label>
+            <input type="password" id="apiKey" placeholder="Enter your GoldAPI key">
+          </div>
+          <div>
+            <label for="markup">Markup Percentage (%)</label>
+            <input type="number" id="markup" placeholder="e.g. 15" step="0.1" min="0">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">
+          💾 Save Settings
+        </button>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="card section-full">
+        <h2>📝 Recent Activity</h2>
+        <ul class="log-list" id="logList">
+          <li class="empty-state">Loading activity logs...</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // Utility
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = `toast ${type}`;
+      setTimeout(() => { toast.className = 'toast'; }, 3500);
+    }
+
+    async function apiFetch(url, options = {}) {
+      try {
+        const res = await fetch(url, {
+          ...options,
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...options.headers },
+        });
+        return await res.json();
+      } catch (err) {
+        console.error(`API error (${url}):`, err);
+        return null;
+      }
+    }
+
+    // Load Health Status
+    async function loadHealth() {
+      const data = await apiFetch('/api/debug/health');
+      if (!data) return;
+
+      const dot = document.getElementById('statusDot');
+      const text = document.getElementById('statusText');
+
+      if (data.status === 'healthy') {
+        dot.className = 'status-dot';
+        text.textContent = 'All systems operational';
+      } else if (data.status === 'degraded') {
+        dot.className = 'status-dot degraded';
+        text.textContent = 'Some services need attention';
+      } else {
+        dot.className = 'status-dot error';
+        text.textContent = 'Service connectivity issues detected';
+      }
+
+      // Show gold price from health if available
+      const goldCheck = data.checks?.goldapi;
+      if (goldCheck?.status === 'healthy' && goldCheck.message) {
+        const priceMatch = goldCheck.message.match(/\$([0-9,.]+)/);
+        if (priceMatch) {
+          document.getElementById('goldPrice').textContent = '$' + priceMatch[1];
+          document.getElementById('priceMeta').textContent = 'Per troy ounce (XAU) • Updated just now';
+        }
+      }
+    }
+
+    // Load Settings
+    async function loadSettings() {
+      const data = await apiFetch('/api/settings');
+      if (!data || data.error) return;
+
+      document.getElementById('apiKey').value = data.goldApiKey || '';
+      document.getElementById('markup').value = data.markupPercentage ?? '';
+    }
+
+    // Save Settings
+    async function saveSettings() {
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Saving...';
+
+      const shop = new URLSearchParams(window.location.search).get('shop') || '';
+      const data = await apiFetch('/api/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          shop,
+          goldApiKey: document.getElementById('apiKey').value,
+          markupPercentage: parseFloat(document.getElementById('markup').value) || 0,
+        }),
+      });
+
+      btn.disabled = false;
+      btn.innerHTML = '💾 Save Settings';
+
+      if (data && !data.error) {
+        showToast('Settings saved successfully!');
+      } else {
+        showToast(data?.error || 'Failed to save settings', 'error');
+      }
+    }
+
+    // Sync Prices
+    async function syncPrices() {
+      const btn = document.getElementById('syncBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Syncing...';
+
+      const data = await apiFetch('/api/sync', { method: 'POST' });
+
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Sync Prices Now';
+
+      if (data && data.success) {
+        showToast(`Sync complete! ${data.itemsUpdated || 0} items updated.`);
+        loadLogs();
+      } else {
+        showToast(data?.error || 'Sync failed', 'error');
+      }
+    }
+
+    // Load Logs
+    async function loadLogs() {
+      const data = await apiFetch('/api/logs');
+      const logList = document.getElementById('logList');
+
+      if (!data || !Array.isArray(data) || data.length === 0) {
+        logList.innerHTML = '<li class="empty-state">No sync activity yet. Click "Sync Prices Now" to start!</li>';
+        return;
+      }
+
+      logList.innerHTML = data.map(log => {
+        const date = new Date(log.startedAt).toLocaleString();
+        const statusClass = log.status === 'SUCCESS' ? 'success' : log.status === 'FAILED' ? 'failed' : 'in-progress';
+        return `
+          <li class="log-item">
+            <div>
+              <div>${log.message || 'Price sync'}</div>
+              <div class="log-info">${date} • ${log.itemsUpdated || 0} items</div>
+            </div>
+            <span class="log-status ${statusClass}">${log.status}</span>
+          </li>
+        `;
+      }).join('');
+    }
+
+    // Initialize
+    loadHealth();
+    loadSettings();
+    loadLogs();
+  </script>
+</body>
+</html>
