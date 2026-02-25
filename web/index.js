@@ -16,19 +16,6 @@ const __dirname = path.dirname(__filename);
 
 const prisma = new PrismaClient();
 const app = express();
-// Serve static frontend in production
-if (process.env.NODE_ENV === "production") {
-  const distPath = path.resolve(__dirname, "frontend", "dist");
-  app.use(express.static(distPath));
-
-  // Route all unhandled GET requests to index.html (for React Router)
-  app.get("*", (req, res, next) => {
-    if (req.method !== "GET" || req.path.startsWith("/api/")) {
-      return next();
-    }
-    res.sendFile(path.join(distPath, "index.html"));
-  });
-}
 
 const shopify = shopifyApp({
   api: {
@@ -430,6 +417,13 @@ async function runPriceUpdateJob() {
 }
 
 cron.schedule("0 */6 * * *", runPriceUpdateJob);
+
+// Serve static frontend AFTER all API/auth routes
+const distPath = path.resolve(__dirname, "frontend", "dist");
+app.use(express.static(distPath));
+app.get("*", (req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
 
 
 const PORT = process.env.PORT || 8081;
