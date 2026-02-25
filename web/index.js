@@ -176,9 +176,9 @@ app.get("/api/debug/health", async (req, res) => {
 });
 
 // Set up Shopify authentication routes
-app.get(shopify.config.auth.path, shopify.auth.begin());
+app.get("/api/auth", shopify.auth.begin());
 app.get(
-  shopify.config.auth.callbackPath,
+  "/api/auth/callback",
   shopify.auth.callback(),
   async (req, res, next) => {
     const session = res.locals.shopify.session;
