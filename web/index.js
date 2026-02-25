@@ -257,7 +257,7 @@ app.get("/api/settings", async (req, res) => {
       await shopifyService.ensureMetafieldDefinitions(client);
 
       const currency = await shopifyService.getShopCurrency(client);
-      if (currency !== settings.storeCurrency) {
+      if (currency && currency !== settings.storeCurrency) {
         await prisma.merchantSettings.update({
           where: { shop },
           data: { storeCurrency: currency }

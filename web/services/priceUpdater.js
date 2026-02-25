@@ -380,29 +380,12 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldA
       return { success: false, itemsUpdated: 0 };
     }
 
-    const metalPrices = {};
-
-    for (const metalCode of ['XAU', 'XAG', 'XPT']) {
-      const pricePerGram = await getPricePerGram(metalCode, currency, goldApiKey);
-      if (pricePerGram !== null && typeof pricePerGram === 'number') {
-        metalPrices[metalCode] = pricePerGram;
-      }
-    }
-
-    if (Object.keys(metalPrices).length === 0) {
-      console.error(`[ERROR] Failed to fetch any metal prices for currency ${currency}`);
-      return { success: false, itemsUpdated: 0 };
-    }
-
-    console.log(
-      `[INFO] Successfully fetched prices for metals in ${currency}: ${Object.keys(metalPrices).join(', ')}`,
-    );
-
     let allProducts = [];
     let cursor = null;
     let hasNextPage = true;
     let pageCount = 0;
 
+    // 1. Fetch all products first to see what metals we actually need to price
     while (hasNextPage) {
       pageCount += 1;
       const pageData = await fetchTaggedProducts(client, cursor);
@@ -426,6 +409,54 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldA
       `[INFO] Fetched ${allProducts.length} products with auto_price_update tag across ${pageCount} page(s)`,
     );
 
+    if (allProducts.length === 0) {
+      console.log('[INFO] No tagged products found, skipping API pull.');
+      return { success: true, itemsUpdated: 0 };
+    }
+
+    // 2. Identify required metals
+    const requiredMetals = new Set();
+    allProducts.forEach((product) => {
+      const pMeta = parseMetafields(product.metafields);
+      const fallbackMetal = pMeta.metal_type;
+
+      product.variants.edges.forEach((vEdge) => {
+        if (!vEdge || !vEdge.node) return;
+        const vMeta = parseMetafields(vEdge.node.metafields);
+        const finalMetal = vMeta.metal_type || fallbackMetal;
+        if (finalMetal) {
+          requiredMetals.add(finalMetal);
+        }
+      });
+    });
+
+    if (requiredMetals.size === 0) {
+      console.warn('[INFO] Products are tagged but missing metal_type definitions, skipping API pull.');
+      return { success: false, itemsUpdated: 0 };
+    }
+
+    // 3. Only fetch from GoldAPI for the metals actually used
+    const metalPrices = {};
+    for (const metalCode of requiredMetals) {
+      // Validate metal format
+      if (!['XAU', 'XAG', 'XPT', 'XPD'].includes(metalCode.toUpperCase())) continue;
+
+      const pricePerGram = await getPricePerGram(metalCode.toUpperCase(), currency, goldApiKey);
+      if (pricePerGram !== null && typeof pricePerGram === 'number') {
+        metalPrices[metalCode] = pricePerGram;
+      }
+    }
+
+    if (Object.keys(metalPrices).length === 0) {
+      console.error(`[ERROR] Failed to fetch any metal prices for currency ${currency}`);
+      return { success: false, itemsUpdated: 0 };
+    }
+
+    console.log(
+      `[INFO] Successfully fetched prices for metals in ${currency}: ${Object.keys(metalPrices).join(', ')}`,
+    );
+
+    // 4. Prepare and execute mutations
     const mutations = await prepareBulkMutations(allProducts, metalPrices, globalMarkup);
     console.log(`[INFO] Prepared ${mutations.length} mutations for bulk update`);
 

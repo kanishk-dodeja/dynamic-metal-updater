@@ -138,7 +138,7 @@ async function getShopCurrency(client) {
     return response.body.data.shop.currencyCode;
   } catch (error) {
     console.error("Error fetching shop currency:", error.message);
-    return "USD";
+    return null;
   }
 }
 
