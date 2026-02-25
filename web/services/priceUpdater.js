@@ -9,7 +9,7 @@ const METAL_MAX_PURITY = {
 async function fetchTaggedProducts(client, cursor = null) {
   const query = `
     query GetTaggedProducts($cursor: String) {
-      products(first: 250, after: $cursor, query: "tag:auto_price_update") {
+      products(first: 50, after: $cursor, query: "tag:auto_price_update") {
         pageInfo {
           hasNextPage
           endCursor
@@ -18,29 +18,19 @@ async function fetchTaggedProducts(client, cursor = null) {
           node {
             id
             title
+            metal_type: metafield(namespace: "custom", key: "metal_type") { value }
+            metal_purity: metafield(namespace: "custom", key: "metal_purity") { value }
+            weight_grams: metafield(namespace: "custom", key: "weight_grams") { value }
+            making_charge: metafield(namespace: "custom", key: "making_charge") { value }
             variants(first: 100) {
               edges {
                 node {
                   id
                   price
-                  metafields(namespace: "custom", first: 10) {
-                    edges {
-                      node {
-                        key
-                        value
-                        type
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            metafields(namespace: "custom", first: 10) {
-              edges {
-                node {
-                  key
-                  value
-                  type
+                  metal_type: metafield(namespace: "custom", key: "metal_type") { value }
+                  metal_purity: metafield(namespace: "custom", key: "metal_purity") { value }
+                  weight_grams: metafield(namespace: "custom", key: "weight_grams") { value }
+                  making_charge: metafield(namespace: "custom", key: "making_charge") { value }
                 }
               }
             }
@@ -70,43 +60,15 @@ async function fetchTaggedProducts(client, cursor = null) {
   }
 }
 
-function parseMetafields(metafieldEdges) {
-  const metafields = {};
+function extractNumber(metafield) {
+  if (!metafield || metafield.value === null || metafield.value === undefined) return null;
+  const num = parseFloat(metafield.value);
+  return Number.isNaN(num) ? null : num;
+}
 
-  if (!metafieldEdges || !Array.isArray(metafieldEdges.edges)) {
-    return metafields;
-  }
-
-  metafieldEdges.edges.forEach((edge) => {
-    if (!edge || !edge.node) {
-      return;
-    }
-
-    const { key, value, type } = edge.node;
-
-    if (key === null || key === undefined) {
-      console.warn('Metafield entry missing key');
-      return;
-    }
-
-    if (value === null || value === undefined) {
-      console.warn(`Metafield "${key}" has null or undefined value`);
-      return;
-    }
-
-    if (type === 'number_decimal' || type === 'number') {
-      const numValue = parseFloat(value);
-      if (Number.isNaN(numValue)) {
-        console.warn(`Metafield "${key}" cannot be parsed as a number: "${value}"`);
-        return;
-      }
-      metafields[key] = numValue;
-    } else {
-      metafields[key] = String(value);
-    }
-  });
-
-  return metafields;
+function extractString(metafield) {
+  if (!metafield || metafield.value === null || metafield.value === undefined) return null;
+  return String(metafield.value).trim();
 }
 
 function calculateVariantPrice(
@@ -216,11 +178,10 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup) {
       continue;
     }
 
-    const productMetafields = parseMetafields(product.metafields);
-    const metalType = productMetafields.metal_type;
-    const metalPurity = productMetafields.metal_purity;
-    const metalWeight = productMetafields.weight_grams;
-    const makingCharge = productMetafields.making_charge ?? 0;
+    const metalType = extractString(product.metal_type);
+    const metalPurity = extractNumber(product.metal_purity);
+    const metalWeight = extractNumber(product.weight_grams);
+    const makingCharge = extractNumber(product.making_charge) ?? 0;
 
     for (const variantEdge of product.variants.edges) {
       if (!variantEdge || !variantEdge.node || !variantEdge.node.id) {
@@ -229,13 +190,17 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup) {
       }
 
       const variantNode = variantEdge.node;
-      const variantMetafields = parseMetafields(variantNode.metafields);
+
+      const vMetalType = extractString(variantNode.metal_type);
+      const vMetalPurity = extractNumber(variantNode.metal_purity);
+      const vMetalWeight = extractNumber(variantNode.weight_grams);
+      const vMakingCharge = extractNumber(variantNode.making_charge);
 
       // Hierarchy: Use variant-specific value if available, otherwise fall back to product-level
-      const finalMetalType = variantMetafields.metal_type || metalType;
-      const finalMetalPurity = variantMetafields.metal_purity ?? metalPurity;
-      const finalMetalWeight = variantMetafields.weight_grams ?? metalWeight;
-      const finalMakingCharge = variantMetafields.making_charge ?? makingCharge;
+      const finalMetalType = vMetalType || metalType;
+      const finalMetalPurity = vMetalPurity ?? metalPurity;
+      const finalMetalWeight = vMetalWeight ?? metalWeight;
+      const finalMakingCharge = vMakingCharge ?? makingCharge;
 
       if (!finalMetalType) {
         console.warn(`[SKIP] Variant ${variantNode.id}: missing metal_type`);
@@ -417,15 +382,17 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldA
     // 2. Identify required metals
     const requiredMetals = new Set();
     allProducts.forEach((product) => {
-      const pMeta = parseMetafields(product.metafields);
-      const fallbackMetal = pMeta.metal_type;
+      const fallbackMetal = product.metal_type && product.metal_type.value
+        ? String(product.metal_type.value).trim()
+        : null;
 
       product.variants.edges.forEach((vEdge) => {
         if (!vEdge || !vEdge.node) return;
-        const vMeta = parseMetafields(vEdge.node.metafields);
-        const finalMetal = vMeta.metal_type || fallbackMetal;
-        if (finalMetal) {
-          requiredMetals.add(finalMetal);
+        const vMetal = vEdge.node.metal_type && vEdge.node.metal_type.value
+          ? String(vEdge.node.metal_type.value).trim()
+          : fallbackMetal;
+        if (vMetal) {
+          requiredMetals.add(vMetal);
         }
       });
     });

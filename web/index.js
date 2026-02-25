@@ -91,9 +91,7 @@ app.get("/api/debug/health", async (req, res) => {
     // 3. Shopify GraphQL Connection Check
     const shopifyStartTime = Date.now();
     try {
-      const testSession = await prisma.session.findFirst({
-        where: { isOnline: true },
-      });
+      const testSession = await prisma.session.findFirst();
 
       if (!testSession) {
         health.checks.shopify.status = "unknown";
@@ -198,10 +196,11 @@ app.get(
 app.use("/api/*", shopify.validateAuthenticatedSession());
 
 app.post("/api/settings", async (req, res) => {
-  const { shop, goldApiKey, markupPercentage } = req.body;
+  const shop = res.locals.shopify?.session?.shop;
+  const { goldApiKey, markupPercentage } = req.body;
 
   if (!shop) {
-    return res.status(400).json({ error: "Missing shop parameter" });
+    return res.status(401).json({ error: "Unauthorized: Missing session shop" });
   }
 
   if (typeof markupPercentage !== 'number' || isNaN(markupPercentage)) {
