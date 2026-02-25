@@ -8,8 +8,8 @@ COPY . .
 # Install root dependencies
 RUN npm install --legacy-peer-deps
 
-# Install web dependencies and build frontend
-RUN cd web && npm install --legacy-peer-deps && cd frontend && npm install --legacy-peer-deps && npm run build
+# Install web dependencies
+RUN cd web && npm install --legacy-peer-deps
 
 # Generate Prisma Client (Critical for database interaction)
 RUN cd web && npx prisma generate --schema ../prisma/schema.prisma

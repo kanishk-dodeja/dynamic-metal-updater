@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "build": "cd web && npm install && cd frontend && npm install && npm run build",
+    "build": "cd web && npm install && npm run build",
     "start": "node web/index.js"
   },
   "engines": {
