@@ -6,10 +6,10 @@ WORKDIR /app
 COPY . .
 
 # Install root dependencies
-RUN npm install --legacy-peer-deps
+RUN npm install
 
-# Install web dependencies
-RUN cd web && npm install --legacy-peer-deps
+# Install web dependencies (no --legacy-peer-deps needed, versions are aligned)
+RUN cd web && npm install
 
 # Generate Prisma Client into web/node_modules (configured in schema.prisma output)
 RUN npx prisma generate --schema prisma/schema.prisma

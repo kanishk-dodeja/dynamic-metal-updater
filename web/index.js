@@ -208,7 +208,7 @@ app.get(
   shopify.redirectToShopifyOrAppRoot()
 );
 
-app.use("/api/*", shopify.validateAuthenticatedRequest());
+app.use("/api/*", shopify.validateAuthenticatedSession());
 
 app.post("/api/settings", async (req, res) => {
   const { shop, goldApiKey, markupPercentage } = req.body;
