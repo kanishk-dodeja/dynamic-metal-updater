@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "build": "cd web && npm install && npm run build",
-    "start": "node web/index.js"
+    "start": "sh start.sh"
   },
   "engines": {
     "node": ">=18.0.0"
