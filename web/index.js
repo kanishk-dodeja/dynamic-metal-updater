@@ -1,14 +1,12 @@
 import "dotenv/config";
 import { shopifyApp } from "@shopify/shopify-app-express";
-import { shopifyApi, ApiVersion } from "@shopify/shopify-api";
+import { ApiVersion } from "@shopify/shopify-api";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import express from "express";
 import cron from "node-cron";
 import { PrismaClient } from "@prisma/client";
 import { updatePricesForShop } from "./services/priceUpdater.js";
 import * as shopifyService from "./services/shopifyService.js";
-import path from "path";
-import { fileURLToPath } from "url";
 import { fetchMetalPrice } from "./services/metalService.js";
 import { verifyWebhook } from "./middleware/verifyWebhook.js";
 import { encrypt, decrypt } from "./utils/encryption.js";
@@ -17,16 +15,13 @@ import { parseProductConfigCSV, generateProductConfigCSV, generateTemplateCSV } 
 import { getDashboardHtml } from "./views/dashboard.js";
 import { getPrivacyPolicyHtml } from "./views/privacyPolicy.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const prisma = new PrismaClient();
 export const app = express();
 
 // Security Headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
@@ -433,7 +428,7 @@ app.post("/api/products/configure", async (req, res) => {
     // 3. Upsert into ProductConfig
     const configData = { shopifyProductId: productId, shopifyVariantId: "", metalType, metalPurity, weightGrams, makingCharge, shop: session.shop };
     await prisma.productConfig.upsert({
-      where: { shopifyProductId_shopifyVariantId: { shopifyProductId: productId, shopifyVariantId: "" } },
+      where: { shop_shopifyProductId_shopifyVariantId: { shop: session.shop, shopifyProductId: productId, shopifyVariantId: "" } },
       update: configData,
       create: configData,
     });
@@ -516,7 +511,7 @@ app.post("/api/products/configure-bulk", async (req, res) => {
       // 3. Upsert local record
       const configData = { shopifyProductId: productId, shopifyVariantId: "", metalType, metalPurity, weightGrams, makingCharge, shop: session.shop };
       await prisma.productConfig.upsert({
-        where: { shopifyProductId_shopifyVariantId: { shopifyProductId: productId, shopifyVariantId: "" } },
+        where: { shop_shopifyProductId_shopifyVariantId: { shop: session.shop, shopifyProductId: productId, shopifyVariantId: "" } },
         update: configData,
         create: configData,
       });
@@ -871,7 +866,8 @@ app.post("/api/csv/import", async (req, res) => {
 
       await prisma.productConfig.upsert({
         where: {
-          shopifyProductId_shopifyVariantId: {
+          shop_shopifyProductId_shopifyVariantId: {
+            shop,
             shopifyProductId: item.shopifyProductId,
             shopifyVariantId: item.shopifyVariantId || "",
           },
@@ -1042,7 +1038,12 @@ app.get("/app", shopify.validateAuthenticatedSession(), (req, res) => {
 app.get("/", (req, res) => {
   const shop = req.query.shop;
   if (shop) {
-    return res.redirect(`/api/auth?shop=${shop}`);
+    // Validate shop parameter to prevent open redirect attacks
+    const shopRegex = /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/;
+    if (!shopRegex.test(shop)) {
+      return res.status(400).send("Invalid shop parameter");
+    }
+    return res.redirect(`/api/auth?shop=${encodeURIComponent(shop)}`);
   }
   res.send(`
     <html><body style="font-family:sans-serif;text-align:center;padding:60px;">

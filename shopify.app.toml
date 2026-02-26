@@ -1,0 +1,25 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+name = "MetalSync"
+client_id = "267cbf34a1fc042a676f892ec4cc6f58"
+application_url = "https://dynamic-metal-updater.onrender.com"
+embedded = false
+
+[access_scopes]
+scopes = "write_products,read_products"
+
+[auth]
+redirect_urls = [
+  "https://dynamic-metal-updater.onrender.com/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2024-07"
+
+  [webhooks.privacy_compliance]
+  customer_data_request_url = "https://dynamic-metal-updater.onrender.com/webhooks/customers/data_request"
+  customer_deletion_url = "https://dynamic-metal-updater.onrender.com/webhooks/customers/redact"
+  shop_deletion_url = "https://dynamic-metal-updater.onrender.com/webhooks/shop/redact"
+
+[pos]
+embedded = false

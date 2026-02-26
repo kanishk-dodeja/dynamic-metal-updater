@@ -1,5 +1,5 @@
-import { getPricePerGram, getAllPricesPerGram } from './metalService.js';
-import { calculatePriceFromFormula, getDefaultFormulaConfig } from './formulaEngine.js';
+import { getAllPricesPerGram } from './metalService.js';
+import { calculatePriceFromFormula } from './formulaEngine.js';
 
 const METAL_MAX_PURITY = {
   XAU: 24,
@@ -252,6 +252,7 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup, formula
       mutations.push({
         id: variantEdge.node.id,
         price: newPrice.toString(),
+        productId: product.id,
       });
     }
   }
@@ -283,8 +284,8 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
   }
 
   const query = `
-    mutation BulkUpdateVariants($input: [ProductVariantInput!]!) {
-      productVariantsBulkUpdate(variants: $input) {
+    mutation BulkUpdateVariants($productId: ID!, $input: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $input) {
         productVariants {
           id
           price
@@ -303,43 +304,44 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
       return false;
     }
 
-    // Shopify limits bulk updates to 250 records per call, but 100 is safer for performance
-    const CHUNK_SIZE = 100;
-    const chunks = [];
-    for (let i = 0; i < mutations.length; i += CHUNK_SIZE) {
-      chunks.push(mutations.slice(i, i + CHUNK_SIZE));
+    // Group mutations by productId (required by Shopify API)
+    const groupedByProduct = {};
+    for (const m of mutations) {
+      const pid = m.productId;
+      if (!groupedByProduct[pid]) groupedByProduct[pid] = [];
+      groupedByProduct[pid].push({ id: m.id, price: m.price });
     }
 
-    console.log(`[INFO] Processing ${chunks.length} batch(es) for ${mutations.length} variant(s)...`);
+    const productIds = Object.keys(groupedByProduct);
+    console.log(`[INFO] Processing ${mutations.length} variant(s) across ${productIds.length} product(s)...`);
 
-    for (let j = 0; j < chunks.length; j += 1) {
-      const chunk = chunks[j];
-      console.log(`[INFO] Updating batch ${j + 1}/${chunks.length} (${chunk.length} items)...`);
+    for (const productId of productIds) {
+      const variants = groupedByProduct[productId];
+      console.log(`[INFO] Updating product ${productId} (${variants.length} variant(s))...`);
 
       const response = await client.graphql(query, {
-        variables: { input: chunk },
+        variables: { productId, input: variants },
       });
 
       if (!response || !response.body || !response.body.data) {
-        console.error(`[ERROR] Malformed GraphQL response in batch ${j + 1}`);
-        return false;
+        console.error(`[ERROR] Malformed GraphQL response for product ${productId}`);
+        continue;
       }
 
       const { productVariantsBulkUpdate } = response.body.data;
       if (!productVariantsBulkUpdate) {
-        console.error(`[ERROR] Bulk update data missing in batch ${j + 1}`);
-        continue; // Try next batch instead of failing entirely
+        console.error(`[ERROR] Bulk update data missing for product ${productId}`);
+        continue;
       }
 
       const { userErrors } = productVariantsBulkUpdate;
       if (Array.isArray(userErrors) && userErrors.length > 0) {
-        console.error(`[ERROR] Batch ${j + 1} had ${userErrors.length} error(s)`);
+        console.error(`[ERROR] Product ${productId} had ${userErrors.length} error(s)`);
         userErrors.forEach((err) => console.error(`  - ${err.field}: ${err.message}`));
-        // We continue to next batch even if this one had errors
       }
     }
 
-    console.log(`[INFO] Completed processing all ${chunks.length} batch(es)`);
+    console.log(`[INFO] Completed processing all ${productIds.length} product(s)`);
     return true;
   } catch (error) {
     console.error(`[ERROR] Exception in bulkUpdateVariants: ${error.message}`);

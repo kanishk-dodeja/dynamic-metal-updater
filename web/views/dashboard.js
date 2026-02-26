@@ -375,7 +375,7 @@ export function getDashboardHtml() {
         <span>💎</span>
         MetalSync
       </div>
-      <a href="mailto:support@metalsync.app">Support</a>
+      <a href="mailto:support@codejainfotech.com">Support</a>
     </header>
 
     <div id="status-banner" class="banner banner-info">
@@ -737,7 +737,7 @@ export function getDashboardHtml() {
             '<div class="product-header">' +
               '<input type="checkbox" onclick="event.stopPropagation(); toggleSelect(\'' + p.id + '\')" id="sel-' + p.id + '" class="prod-check" ' + (selection.has(p.id) ? 'checked' : '') + ' style="width: 20px; height: 20px; margin-right: 8px;">' +
               '<div style="display: flex; align-items: center; gap: 16px; flex: 1;" onclick="toggleConfig(\'' + p.id + '\')">' +
-                '<img src="' + (p.featuredImage?.url || 'https://via.placeholder.com/48') + '" class="product-thumb">' +
+                '<img src="' + (p.featuredImage?.url || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2248%22 height=%2248%22%3E%3Crect width=%2248%22 height=%2248%22 fill=%22%23eee%22/%3E%3Ctext x=%2224%22 y=%2228%22 font-size=%2212%22 text-anchor=%22middle%22 fill=%22%23999%22%3ENo img%3C/text%3E%3C/svg%3E') + '" class="product-thumb">' +
                 '<div class="product-info">' +
                   '<div class="product-title">' + p.title + '</div>' +
                   '<div class="product-status">' +

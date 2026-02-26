@@ -1,5 +1,5 @@
 export function getPrivacyPolicyHtml() {
-    return `
+  return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -68,7 +68,7 @@ export function getPrivacyPolicyHtml() {
         <p>We comply with GDPR requirements regarding data portability and the right to be forgotten. Merchants can request a copy of their stored configuration or immediate deletion of their account data at any time.</p>
 
         <h2>6. Contact Us</h2>
-        <p>If you have any questions about this Privacy Policy or your data, please contact us at: <strong>support@metalsync.example.com</strong></p>
+        <p>If you have any questions about this Privacy Policy or your data, please contact us at: <strong>support@codejainfotech.com</strong></p>
 
         <div class="footer">
           &copy; 2026 MetalSync. All rights reserved.

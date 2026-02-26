@@ -5,5 +5,7 @@ web/scripts/
 web/frontend/pages/
 web/frontend/dist/
 node_modules
+web/node_modules
 .git
 .env*
+*.md
