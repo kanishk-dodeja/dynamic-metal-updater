@@ -92,7 +92,7 @@ model ProductConfig {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  @@unique([shopifyProductId, shopifyVariantId])
+  @@unique([shop, shopifyProductId, shopifyVariantId])
   @@index([shop])
 }
 

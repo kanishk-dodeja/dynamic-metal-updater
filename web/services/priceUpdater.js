@@ -5,6 +5,7 @@ const METAL_MAX_PURITY = {
   XAU: 24,
   XAG: 999,
   XPT: 999,
+  XPD: 999,
 };
 
 async function fetchTaggedProducts(client, cursor = null) {

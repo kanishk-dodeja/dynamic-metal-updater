@@ -80,6 +80,14 @@ app.post('/webhooks/shop/redact', rawParser, verifyWebhook, async (req, res) => 
       where: { shop: shop_domain },
     });
 
+    await prisma.productConfig.deleteMany({
+      where: { shop: shop_domain },
+    });
+
+    await prisma.pricingFormula.deleteMany({
+      where: { shop: shop_domain },
+    });
+
     await prisma.merchantSettings.deleteMany({
       where: { shop: shop_domain },
     });
@@ -107,6 +115,14 @@ app.post('/webhooks/app/uninstalled', rawParser, verifyWebhook, async (req, res)
   try {
     // Must logically delete child records before parents
     await prisma.syncLog.deleteMany({
+      where: { shop },
+    });
+
+    await prisma.productConfig.deleteMany({
+      where: { shop },
+    });
+
+    await prisma.pricingFormula.deleteMany({
       where: { shop },
     });
 
