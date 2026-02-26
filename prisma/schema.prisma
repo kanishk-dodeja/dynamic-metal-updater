@@ -3,7 +3,6 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../web/node_modules/.prisma/client"
 }
 
 datasource db {
@@ -93,7 +92,7 @@ model ProductConfig {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  @@unique([shop, shopifyProductId, shopifyVariantId])
+  @@unique([shopifyProductId, shopifyVariantId])
   @@index([shop])
 }
 

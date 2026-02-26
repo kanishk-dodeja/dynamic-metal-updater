@@ -9,6 +9,7 @@ import { shopifyApp } from '@shopify/shopify-app-express';
 import { ApiVersion } from '@shopify/shopify-api';
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import { updatePricesForShop } from './services/priceUpdater.js';
+import { decrypt } from './utils/encryption.js';
 
 const prisma = new PrismaClient();
 
@@ -113,8 +114,11 @@ async function main() {
     client,
     markupPercentage,
     merchantSettings.storeCurrency,
-    merchantSettings.goldApiKey,
-    true
+    decrypt(merchantSettings.goldApiKey),
+    true,
+    {}, // stopLossConfig (empty for debug run)
+    null, // formulaConfig (null for debug run)
+    false // showPriceBreakup
   );
 
   console.log('================================================================================');

@@ -1,0 +1,152 @@
+{%- assign breakdown = product.metafields.metalsync.price_breakdown.value -%}
+
+{%- if breakdown and section.settings.show_breakup -%}
+  <div class="metalsync-price-breakup metalsync-style-{{ section.settings.display_style }}" 
+       style="--metalsync-accent: {{ section.settings.accent_color }};">
+    
+    <div class="metalsync-header">
+      <h3>{{ 'price_breakup.title' | t }}</h3>
+    </div>
+
+    <div class="metalsync-body">
+      {%- if section.settings.display_style == 'accordion' -%}
+        <details>
+          <summary>{{ 'price_breakup.view_details' | t | default: 'View Breakdown' }}</summary>
+          <div class="metalsync-list">
+            {%- for pair in breakdown -%}
+              {%- assign item = pair[1] -%}
+              {%- if item.value > 0 -%}
+                <div class="metalsync-item">
+                  <span>{{ item.label }}</span>
+                  <span>{{ item.value | money }}</span>
+                </div>
+              {%- endif -%}
+            {%- endfor -%}
+          </div>
+        </details>
+      {%- elsif section.settings.display_style == 'table' -%}
+        <table>
+          <tbody>
+            {%- for pair in breakdown -%}
+              {%- assign item = pair[1] -%}
+              {%- if item.value > 0 -%}
+                <tr>
+                  <td>{{ item.label }}</td>
+                  <td>{{ item.value | money }}</td>
+                </tr>
+              {%- endif -%}
+            {%- endfor -%}
+          </tbody>
+        </table>
+      {%- else -%}
+        <div class="metalsync-list">
+          {%- for pair in breakdown -%}
+            {%- assign item = pair[1] -%}
+            {%- if item.value > 0 -%}
+              <div class="metalsync-item">
+                <span>{{ item.label }}</span>
+                <span>{{ item.value | money }}</span>
+              </div>
+            {%- endif -%}
+          {%- endfor -%}
+        </div>
+      {%- endif -%}
+    </div>
+  </div>
+
+  <style>
+    .metalsync-price-breakup {
+      margin: 1.5rem 0;
+      padding: 1rem;
+      border: 1px solid #e3e5e7;
+      border-radius: 12px;
+      font-family: inherit;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .metalsync-header h3 {
+      margin: 0 0 1rem 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--metalsync-accent);
+    }
+    .metalsync-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      font-size: 0.95rem;
+      color: #202223;
+      border-bottom: 1px solid #f6f6f7;
+    }
+    .metalsync-item:last-child {
+      border-bottom: none;
+      border-top: 2px solid #e3e5e7;
+      margin-top: 0.5rem;
+      padding-top: 0.75rem;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .metalsync-style-table table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .metalsync-style-table td {
+      padding: 0.75rem 0;
+      font-size: 0.95rem;
+      border-bottom: 1px solid #f6f6f7;
+    }
+    .metalsync-style-table tr:last-child td {
+      border-bottom: none;
+      border-top: 2px solid #e3e5e7;
+      font-weight: 700;
+      font-size: 1rem;
+      padding-top: 1rem;
+    }
+    .metalsync-style-table td:last-child {
+      text-align: right;
+    }
+    .metalsync-style-accordion summary {
+      cursor: pointer;
+      font-size: 0.95rem;
+      color: #6d7175;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+    .metalsync-style-accordion summary:hover {
+      color: var(--metalsync-accent);
+    }
+  </style>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Price Breakup",
+  "target": "section",
+  "templates": ["product"],
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "show_breakup",
+      "label": "Show price breakdown",
+      "default": true
+    },
+    {
+      "type": "select",
+      "id": "display_style",
+      "label": "Display Style",
+      "options": [
+        { "value": "card", "label": "Card" },
+        { "value": "accordion", "label": "Accordion" },
+        { "value": "table", "label": "Table" }
+      ],
+      "default": "card"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Accent Color",
+      "default": "#008060"
+    }
+  ]
+}
+{% endschema %}

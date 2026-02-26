@@ -14,12 +14,33 @@ import { verifyWebhook } from "./middleware/verifyWebhook.js";
 import { encrypt, decrypt } from "./utils/encryption.js";
 import { validateFormulaConfig } from "./services/formulaEngine.js";
 import { parseProductConfigCSV, generateProductConfigCSV, generateTemplateCSV } from "./services/csvService.js";
+import { getDashboardHtml } from "./views/dashboard.js";
+import { getPrivacyPolicyHtml } from "./views/privacyPolicy.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const prisma = new PrismaClient();
-const app = express();
+export const app = express();
+
+// Security Headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// Body Size Check Middleware
+app.use((req, res, next) => {
+  if (req.headers['content-length'] && parseInt(req.headers['content-length']) > 10240) {
+    return res.status(413).json({ error: "Request body too large", code: "PAYLOAD_TOO_LARGE" });
+  }
+  next();
+});
+
+let healthCache = { data: null, timestamp: 0, TTL: 300000 }; // 5 min TTL
 
 const shopify = shopifyApp({
   api: {
@@ -108,26 +129,26 @@ app.post('/webhooks/app/uninstalled', rawParser, verifyWebhook, async (req, res)
 
 app.use(express.json());
 
+// Public routes (no auth needed)
+app.get("/privacy", (req, res) => {
+  res.type('html').send(getPrivacyPolicyHtml());
+});
+
 app.get("/api/debug/health", async (req, res) => {
+  const force = req.query.force === 'true';
+  const now = Date.now();
+
+  if (!force && healthCache.data && (now - healthCache.timestamp < healthCache.TTL)) {
+    return res.json({ ...healthCache.data, _cached: true });
+  }
+
   const health = {
     timestamp: new Date().toISOString(),
     status: "unknown",
     checks: {
-      database: {
-        status: "unknown",
-        message: "",
-        latency: 0,
-      },
-      goldapi: {
-        status: "unknown",
-        message: "",
-        latency: 0,
-      },
-      shopify: {
-        status: "unknown",
-        message: "",
-        latency: 0,
-      },
+      database: { status: "unknown", message: "", latency: 0 },
+      goldapi: { status: "unknown", message: "", latency: 0 },
+      shopify: { status: "unknown", message: "", latency: 0 },
     },
   };
 
@@ -135,13 +156,13 @@ app.get("/api/debug/health", async (req, res) => {
     // 1. Database Connection Check
     const dbStartTime = Date.now();
     try {
-      const dbCheck = await prisma.$queryRaw`SELECT 1`;
+      await prisma.$queryRaw`SELECT 1`;
       health.checks.database.status = "healthy";
       health.checks.database.message = "Database connection successful";
       health.checks.database.latency = Date.now() - dbStartTime;
     } catch (dbError) {
       health.checks.database.status = "unhealthy";
-      health.checks.database.message = dbError.message || "Database connection failed";
+      health.checks.database.message = "Database connection failed";
       health.checks.database.latency = Date.now() - dbStartTime;
     }
 
@@ -149,19 +170,17 @@ app.get("/api/debug/health", async (req, res) => {
     const apiStartTime = Date.now();
     try {
       const apiResult = await fetchMetalPrice("XAU");
-
-      if (apiResult && apiResult.success === true) {
+      if (apiResult && apiResult.success) {
         health.checks.goldapi.status = "healthy";
-        health.checks.goldapi.message = `Successfully fetched XAU price: $${apiResult.data.pricePerOunce}/oz`;
+        health.checks.goldapi.message = "Successfully fetched XAU price";
       } else {
         health.checks.goldapi.status = "unhealthy";
-        health.checks.goldapi.message = `API returned error: ${apiResult.error}`;
+        health.checks.goldapi.message = apiResult.error || "API returned error";
       }
-
       health.checks.goldapi.latency = Date.now() - apiStartTime;
     } catch (apiError) {
       health.checks.goldapi.status = "unhealthy";
-      health.checks.goldapi.message = apiError.message || "GoldAPI connection failed";
+      health.checks.goldapi.message = "GoldAPI connection failed";
       health.checks.goldapi.latency = Date.now() - apiStartTime;
     }
 
@@ -169,71 +188,32 @@ app.get("/api/debug/health", async (req, res) => {
     const shopifyStartTime = Date.now();
     try {
       const testSession = await prisma.session.findFirst();
-
       if (!testSession) {
         health.checks.shopify.status = "unknown";
-        health.checks.shopify.message =
-          "No active sessions found; cannot test Shopify connection";
-        health.checks.shopify.latency = Date.now() - shopifyStartTime;
+        health.checks.shopify.message = "No active sessions found";
       } else {
-        try {
-          const client = new shopify.api.clients.Graphql({
-            session: testSession,
-          });
-
-          const testQuery = `
-            query {
-              shop {
-                name
-              }
-            }
-          `;
-
-          const response = await client.graphql(testQuery);
-
-          if (
-            response &&
-            response.body &&
-            response.body.data &&
-            response.body.data.shop
-          ) {
-            health.checks.shopify.status = "healthy";
-            health.checks.shopify.message = `Successfully connected to Shopify shop: ${response.body.data.shop.name}`;
-          } else {
-            health.checks.shopify.status = "unhealthy";
-            health.checks.shopify.message = "Unexpected Shopify GraphQL response format";
-          }
-
-          health.checks.shopify.latency = Date.now() - shopifyStartTime;
-        } catch (graphqlError) {
-          health.checks.shopify.status = "unhealthy";
-          health.checks.shopify.message =
-            graphqlError.message || "Shopify GraphQL query failed";
-          health.checks.shopify.latency = Date.now() - shopifyStartTime;
-        }
+        const client = new shopify.api.clients.Graphql({ session: testSession });
+        await client.graphql(`query { shop { name } }`);
+        health.checks.shopify.status = "healthy";
+        health.checks.shopify.message = "Connected to Shopify";
       }
+      health.checks.shopify.latency = Date.now() - shopifyStartTime;
     } catch (shopifyError) {
       health.checks.shopify.status = "unhealthy";
-      health.checks.shopify.message =
-        shopifyError.message || "Shopify connection check failed";
+      health.checks.shopify.message = "Shopify GraphQL query failed";
       health.checks.shopify.latency = Date.now() - shopifyStartTime;
     }
 
     // Determine overall status
     const allStatuses = Object.values(health.checks).map((c) => c.status);
-    if (allStatuses.every((s) => s === "healthy")) {
-      health.status = "healthy";
-    } else if (allStatuses.some((s) => s === "unhealthy")) {
-      health.status = "degraded";
-    } else {
-      health.status = "unknown";
-    }
+    if (allStatuses.every((s) => s === "healthy")) health.status = "healthy";
+    else if (allStatuses.some((s) => s === "unhealthy")) health.status = "degraded";
+    else health.status = "unknown";
 
+    healthCache = { data: health, timestamp: now, TTL: 300000 };
     res.json(health);
   } catch (error) {
-    health.status = "error";
-    health.error = error.message;
-    res.status(500).json(health);
+    res.status(500).json({ error: "Internal Health Check Error", code: "HEALTH_CHECK_ERROR" });
   }
 });
 
@@ -300,8 +280,11 @@ app.get(
 
     next();
   },
-  shopify.redirectToShopifyOrAppRoot()
+  (req, res) => {
+    res.redirect("/app");
+  }
 );
+
 
 app.use("/api/*", shopify.validateAuthenticatedSession());
 
@@ -367,33 +350,34 @@ app.get("/api/products", async (req, res) => {
     res.json({ products, pageInfo });
   } catch (error) {
     console.error("Error fetching products:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch products", code: "FETCH_FAILED" });
   }
 });
 
 app.post("/api/products/configure", async (req, res) => {
   const session = res.locals.shopify.session;
-  const { productId, metalType, metalPurity, weightGrams, makingCharge = 0, addTag = true } = req.body;
+  let { productId, metalType, metalPurity, weightGrams, makingCharge = 0, addTag = true } = req.body;
 
-  if (!productId || typeof productId !== 'string') {
-    return res.status(400).json({ error: "productId is required" });
+  // Sanitization
+  productId = typeof productId === 'string' ? productId.trim() : productId;
+  metalType = typeof metalType === 'string' ? metalType.trim().toUpperCase() : metalType;
+
+  if (!productId) {
+    return res.status(400).json({ error: "productId is required", code: "INVALID_INPUT" });
   }
 
   const allowedMetals = ["XAU", "XAG", "XPT", "XPD"];
   if (!allowedMetals.includes(metalType)) {
-    return res.status(400).json({ error: `Invalid metalType. Allowed: ${allowedMetals.join(", ")}` });
+    return res.status(400).json({ error: `Invalid metalType. Allowed: ${allowedMetals.join(", ")}`, code: "INVALID_INPUT" });
   }
 
-  if (typeof metalPurity !== 'number' || metalPurity <= 0) {
-    return res.status(400).json({ error: "metalPurity must be a positive number" });
-  }
+  // Clamping and validation
+  metalPurity = Math.max(0, parseFloat(metalPurity));
+  weightGrams = Math.max(0, parseFloat(weightGrams));
+  makingCharge = Math.max(0, parseFloat(makingCharge));
 
-  if (typeof weightGrams !== 'number' || weightGrams <= 0) {
-    return res.status(400).json({ error: "weightGrams must be a positive number" });
-  }
-
-  if (typeof makingCharge !== 'number' || makingCharge < 0) {
-    return res.status(400).json({ error: "makingCharge must be a non-negative number" });
+  if (!metalPurity || !weightGrams) {
+    return res.status(400).json({ error: "Purity and weight must be positive numbers", code: "INVALID_INPUT" });
   }
 
   try {
@@ -403,7 +387,6 @@ app.post("/api/products/configure", async (req, res) => {
     const metafieldsMutation = `
       mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
-          metafields { id key value }
           userErrors { field message }
         }
       }
@@ -422,42 +405,19 @@ app.post("/api/products/configure", async (req, res) => {
 
     const metafieldErrors = metafieldsResponse.body.data.metafieldsSet.userErrors;
     if (metafieldErrors.length > 0) {
-      return res.status(400).json({ error: "Failed to set metafields", userErrors: metafieldErrors });
+      return res.status(400).json({ error: "Failed to set metafields", details: metafieldErrors, code: "SHOPIFY_ERROR" });
     }
 
     // 2. Add Tag if requested
     if (addTag) {
-      const tagMutation = `
-        mutation AddTag($id: ID!, $tags: [String!]!) {
-          tagsAdd(id: $id, tags: $tags) {
-            node { id }
-            userErrors { field message }
-          }
-        }
-      `;
-      await client.graphql(tagMutation, {
-        variables: { id: productId, tags: ["auto_price_update"] },
-      });
+      const tagMutation = `mutation AddTag($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }`;
+      await client.graphql(tagMutation, { variables: { id: productId, tags: ["auto_price_update"] } });
     }
 
-    // 3. Upsert into ProductConfig for consistency
-    const configData = {
-      shopifyProductId: productId,
-      shopifyVariantId: null, // Product-level config
-      metalType,
-      metalPurity,
-      weightGrams,
-      makingCharge,
-      shop: session.shop
-    };
-
+    // 3. Upsert into ProductConfig
+    const configData = { shopifyProductId: productId, shopifyVariantId: "", metalType, metalPurity, weightGrams, makingCharge, shop: session.shop };
     await prisma.productConfig.upsert({
-      where: {
-        shopifyProductId_shopifyVariantId: {
-          shopifyProductId: productId,
-          shopifyVariantId: "", // Prisma @unique on specific combination
-        },
-      },
+      where: { shopifyProductId_shopifyVariantId: { shopifyProductId: productId, shopifyVariantId: "" } },
       update: configData,
       create: configData,
     });
@@ -465,7 +425,7 @@ app.post("/api/products/configure", async (req, res) => {
     res.json({ success: true, productId });
   } catch (error) {
     console.error("Error configuring product:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Configuration failed", code: "CONFIG_FAILED" });
   }
 });
 
@@ -484,13 +444,25 @@ app.post("/api/products/configure-bulk", async (req, res) => {
   const results = { configured: 0, errors: [] };
   const client = new shopify.api.clients.Graphql({ session });
 
-  for (const config of products) {
-    const { productId, metalType, metalPurity, weightGrams, makingCharge = 0, addTag = true } = config;
+  for (let config of products) {
+    let { productId, metalType, metalPurity, weightGrams, makingCharge = 0, addTag = true } = config;
 
-    // Basic internal validation
+    // Sanitization & Clamping
+    productId = typeof productId === 'string' ? productId.trim() : productId;
+    metalType = typeof metalType === 'string' ? metalType.trim().toUpperCase() : metalType;
+
     const allowedMetals = ["XAU", "XAG", "XPT", "XPD"];
-    if (!productId || !allowedMetals.includes(metalType) || metalPurity <= 0 || weightGrams <= 0) {
-      results.errors.push({ productId, error: "Invalid input parameters" });
+    if (!productId || !allowedMetals.includes(metalType)) {
+      results.errors.push({ productId, error: "Invalid product ID or metal type", code: "INVALID_INPUT" });
+      continue;
+    }
+
+    metalPurity = Math.max(0, parseFloat(metalPurity));
+    weightGrams = Math.max(0, parseFloat(weightGrams));
+    makingCharge = Math.max(0, parseFloat(makingCharge));
+
+    if (!metalPurity || !weightGrams) {
+      results.errors.push({ productId, error: "Purity and weight must be positive", code: "INVALID_INPUT" });
       continue;
     }
 
@@ -515,7 +487,7 @@ app.post("/api/products/configure-bulk", async (req, res) => {
       });
 
       if (mfRes.body.data.metafieldsSet.userErrors.length > 0) {
-        results.errors.push({ productId, error: mfRes.body.data.metafieldsSet.userErrors[0].message });
+        results.errors.push({ productId, error: mfRes.body.data.metafieldsSet.userErrors[0].message, code: "SHOPIFY_ERROR" });
         continue;
       }
 
@@ -535,7 +507,7 @@ app.post("/api/products/configure-bulk", async (req, res) => {
 
       results.configured++;
     } catch (err) {
-      results.errors.push({ productId, error: err.message });
+      results.errors.push({ productId, error: "Internal error during configuration", code: "CONFIG_FAILED" });
     }
   }
 
@@ -544,7 +516,7 @@ app.post("/api/products/configure-bulk", async (req, res) => {
 
 app.post("/api/settings", async (req, res) => {
   const shop = res.locals.shopify?.session?.shop;
-  const {
+  let {
     goldApiKey,
     markupPercentage,
     stopLossXAU,
@@ -556,58 +528,44 @@ app.post("/api/settings", async (req, res) => {
   } = req.body;
 
   if (!shop) {
-    return res.status(401).json({ error: "Unauthorized: Missing session shop" });
+    return res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
   }
 
-  // Validation
-  if (markupPercentage !== undefined && (typeof markupPercentage !== 'number' || isNaN(markupPercentage))) {
-    return res.status(400).json({ error: "markupPercentage must be a valid number" });
-  }
+  // Sanitization & Clamping
+  goldApiKey = typeof goldApiKey === 'string' ? goldApiKey.trim() : goldApiKey;
+  if (markupPercentage !== undefined) markupPercentage = Math.min(10000, Math.max(-100, parseFloat(markupPercentage)));
+  if (syncFrequencyMin !== undefined) syncFrequencyMin = Math.min(1440, Math.max(15, parseInt(syncFrequencyMin)));
 
-  if (goldApiKey !== undefined && (!goldApiKey || goldApiKey.trim() === '')) {
-    return res.status(400).json({ error: "goldApiKey is required" });
+  if (goldApiKey !== undefined && !goldApiKey) {
+    return res.status(400).json({ error: "goldApiKey is required", code: "INVALID_INPUT" });
   }
 
   const validateStopLoss = (val) => val === null || val === undefined || (typeof val === 'number' && val >= 0);
   if (![stopLossXAU, stopLossXAG, stopLossXPT, stopLossXPD].every(validateStopLoss)) {
-    return res.status(400).json({ error: "Stop-loss values must be positive numbers or null" });
-  }
-
-  if (syncFrequencyMin !== undefined) {
-    if (!Number.isInteger(syncFrequencyMin) || syncFrequencyMin < 15 || syncFrequencyMin > 1440) {
-      return res.status(400).json({ error: "syncFrequencyMin must be an integer between 15 and 1440" });
-    }
-  }
-
-  if (showPriceBreakup !== undefined && typeof showPriceBreakup !== 'boolean') {
-    return res.status(400).json({ error: "showPriceBreakup must be a boolean" });
+    return res.status(400).json({ error: "Stop-loss values must be positive numbers", code: "INVALID_INPUT" });
   }
 
   try {
     const updateData = {};
-    if (goldApiKey !== undefined) updateData.goldApiKey = encrypt(goldApiKey.trim());
+    if (goldApiKey !== undefined) updateData.goldApiKey = encrypt(goldApiKey);
     if (markupPercentage !== undefined) updateData.markupPercentage = markupPercentage;
     if (stopLossXAU !== undefined) updateData.stopLossXAU = stopLossXAU || null;
     if (stopLossXAG !== undefined) updateData.stopLossXAG = stopLossXAG || null;
     if (stopLossXPT !== undefined) updateData.stopLossXPT = stopLossXPT || null;
     if (stopLossXPD !== undefined) updateData.stopLossXPD = stopLossXPD || null;
     if (syncFrequencyMin !== undefined) updateData.syncFrequencyMin = syncFrequencyMin;
-    if (showPriceBreakup !== undefined) updateData.showPriceBreakup = showPriceBreakup;
+    if (showPriceBreakup !== undefined) updateData.showPriceBreakup = !!showPriceBreakup;
 
     const settings = await prisma.merchantSettings.upsert({
       where: { shop },
       update: updateData,
-      create: {
-        shop,
-        ...updateData,
-        goldApiKey: updateData.goldApiKey || "", // Ensure required field for create
-      },
+      create: { shop, ...updateData, goldApiKey: updateData.goldApiKey || "" },
     });
 
     res.json(settings);
   } catch (error) {
     console.error("Error saving settings:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to save settings", code: "SAVE_FAILED" });
   }
 });
 
@@ -648,7 +606,7 @@ app.get("/api/settings", async (req, res) => {
     res.json(settings);
   } catch (error) {
     console.error("Error fetching settings:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch settings", code: "FETCH_FAILED" });
   }
 });
 
@@ -656,16 +614,35 @@ app.post("/api/sync", async (req, res) => {
   const shop = res.locals.shopify.session.shop;
 
   if (!shop) {
-    return res.status(400).json({ error: "Missing shop parameter" });
+    return res.status(400).json({ error: "Missing shop parameter", code: "MISSING_SHOP" });
   }
 
   try {
+    // Sync Rate Limiting (10 min lockout)
+    const recentSync = await prisma.syncLog.findFirst({
+      where: {
+        shop,
+        status: "IN_PROGRESS",
+        startedAt: { gte: new Date(Date.now() - 600000) } // 10 mins ago
+      }
+    });
+
+    if (recentSync) {
+      return res.status(429).json({
+        error: "A sync is already in progress. Please wait.",
+        code: "SYNC_IN_PROGRESS"
+      });
+    }
+
     const merchant = await prisma.merchantSettings.findUnique({
       where: { shop },
     });
 
     if (!merchant) {
-      return res.status(404).json({ error: "Merchant settings not found. Please save settings first." });
+      return res.status(404).json({
+        error: "Merchant settings not found. Please save settings first.",
+        code: "SETTINGS_NOT_FOUND"
+      });
     }
 
     const session = await prisma.session.findFirst({
@@ -673,11 +650,10 @@ app.post("/api/sync", async (req, res) => {
     });
 
     if (!session) {
-      return res.status(401).json({ error: "No active session" });
+      return res.status(401).json({ error: "No active session", code: "UNAUTHORIZED" });
     }
 
     const client = new shopify.api.clients.Graphql({ session });
-
     const decryptedApiKey = decrypt(merchant.goldApiKey);
 
     const stopLossConfig = {};
@@ -686,7 +662,20 @@ app.post("/api/sync", async (req, res) => {
     if (merchant.stopLossXPT) stopLossConfig.XPT = merchant.stopLossXPT;
     if (merchant.stopLossXPD) stopLossConfig.XPD = merchant.stopLossXPD;
 
-    // Create log entry (try/catch in case migration hasn't run)
+    // Load default formula for sync
+    let formulaConfig = null;
+    try {
+      const defaultFormula = await prisma.pricingFormula.findFirst({
+        where: { shop, isDefault: true }
+      });
+      if (defaultFormula && defaultFormula.formulaConfig) {
+        formulaConfig = JSON.parse(defaultFormula.formulaConfig);
+      }
+    } catch (e) {
+      console.warn('[SYNC] Could not load formula:', e.message);
+    }
+
+    // Create log entry
     let syncLog;
     try {
       syncLog = await prisma.syncLog.create({
@@ -697,7 +686,7 @@ app.post("/api/sync", async (req, res) => {
         }
       });
     } catch (e) {
-      console.warn("Could not create sync log, skipping log step:", e.message);
+      console.warn("Could not create sync log:", e.message);
     }
 
     const result = await updatePricesForShop(
@@ -706,7 +695,9 @@ app.post("/api/sync", async (req, res) => {
       merchant.storeCurrency,
       decryptedApiKey,
       false,
-      stopLossConfig
+      stopLossConfig,
+      formulaConfig,
+      merchant.showPriceBreakup
     );
 
     if (syncLog) {
@@ -728,7 +719,7 @@ app.post("/api/sync", async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error("Error during manual sync:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Sync failed", code: "SYNC_FAILED" });
   }
 });
 
@@ -766,22 +757,25 @@ app.get("/api/formulas", async (req, res) => {
 
 app.post("/api/formulas", async (req, res) => {
   const shop = res.locals.shopify.session.shop;
-  const { id, name, formulaConfig, applyToTags, isDefault } = req.body;
+  const { id } = req.body;
+  let { name, formulaConfig, applyToTags, isDefault } = req.body;
 
+  // Sanitization
+  name = typeof name === 'string' ? name.trim() : name;
   if (!name || !formulaConfig) {
-    return res.status(400).json({ error: "Name and formulaConfig are required" });
+    return res.status(400).json({ error: "Name and formulaConfig are required", code: "INVALID_INPUT" });
   }
 
   let parsedConfig;
   try {
     parsedConfig = typeof formulaConfig === 'string' ? JSON.parse(formulaConfig) : formulaConfig;
   } catch (e) {
-    return res.status(400).json({ error: "Invalid JSON in formulaConfig" });
+    return res.status(400).json({ error: "Invalid JSON in formulaConfig", code: "INVALID_INPUT" });
   }
 
   const validation = validateFormulaConfig(parsedConfig);
   if (!validation.valid) {
-    return res.status(400).json({ error: "Invalid formula configuration", details: validation.errors });
+    return res.status(400).json({ error: "Invalid formula configuration", details: validation.errors, code: "INVALID_INPUT" });
   }
 
   try {
@@ -796,14 +790,14 @@ app.post("/api/formulas", async (req, res) => {
       shop,
       name,
       formulaConfig: JSON.stringify(parsedConfig),
-      applyToTags,
+      applyToTags: Array.isArray(applyToTags) ? applyToTags.join(',') : "",
       isDefault: !!isDefault,
     };
 
     let formula;
     if (id) {
       formula = await prisma.pricingFormula.update({
-        where: { id, shop }, // Security: ensure it belongs to shop
+        where: { id, shop },
         data,
       });
     } else {
@@ -812,7 +806,8 @@ app.post("/api/formulas", async (req, res) => {
 
     res.json(formula);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error saving formula:", error);
+    res.status(500).json({ error: "Failed to save formula", code: "SAVE_FAILED" });
   }
 });
 
@@ -826,7 +821,8 @@ app.delete("/api/formulas/:id", async (req, res) => {
     });
     res.status(200).json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error deleting formula:", error);
+    res.status(500).json({ error: "Failed to delete formula", code: "DELETE_FAILED" });
   }
 });
 
@@ -834,23 +830,27 @@ app.post("/api/csv/import", async (req, res) => {
   const shop = res.locals.shopify.session.shop;
   const { csvData } = req.body;
 
-  if (!csvData) {
-    return res.status(400).json({ error: "Missing csvData" });
+  if (!csvData || typeof csvData !== 'string') {
+    return res.status(400).json({ error: "Missing csvData or invalid format", code: "INVALID_INPUT" });
   }
 
   try {
     const { valid, errors } = parseProductConfigCSV(csvData);
 
+    if (valid.length === 0) {
+      return res.status(400).json({ error: "No valid rows found in CSV", details: errors, code: "INVALID_INPUT" });
+    }
+
     let importedCount = 0;
     for (const item of valid) {
       const data = {
         shop,
-        shopifyProductId: item.shopifyProductId,
-        shopifyVariantId: item.shopifyVariantId || "",
-        metalType: item.metalType,
-        metalPurity: item.metalPurity,
-        weightGrams: item.weightGrams,
-        makingCharge: item.makingCharge,
+        shopifyProductId: String(item.shopifyProductId).trim(),
+        shopifyVariantId: item.shopifyVariantId ? String(item.shopifyVariantId).trim() : "",
+        metalType: String(item.metalType).trim().toUpperCase(),
+        metalPurity: Math.max(0, parseFloat(item.metalPurity)),
+        weightGrams: Math.max(0, parseFloat(item.weightGrams)),
+        makingCharge: Math.max(0, parseFloat(item.makingCharge || 0)),
       };
 
       await prisma.productConfig.upsert({
@@ -868,7 +868,8 @@ app.post("/api/csv/import", async (req, res) => {
 
     res.json({ imported: importedCount, errors });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("CSV Import failed:", error);
+    res.status(500).json({ error: "CSV Import failed", code: "IMPORT_FAILED" });
   }
 });
 
@@ -885,7 +886,8 @@ app.get("/api/csv/export", async (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename=product_configs_${shop}.csv`);
     res.send(csv);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("CSV Export failed:", error);
+    res.status(500).json({ error: "CSV Export failed", code: "EXPORT_FAILED" });
   }
 });
 
@@ -896,26 +898,55 @@ app.get("/api/csv/template", async (req, res) => {
     res.setHeader("Content-Disposition", "attachment; filename=product_config_template.csv");
     res.send(template);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("CSV Template generation failed:", error);
+    res.status(500).json({ error: "Failed to generate template", code: "TEMPLATE_FAILED" });
   }
 });
 
-async function runPriceUpdateJob() {
+// Run the scheduler every 15 minutes to check which merchants need a sync
+cron.schedule("*/15 * * * *", async () => {
   try {
+    console.log("[CRON] Running per-merchant sync scheduler");
     const activeMerchants = await prisma.merchantSettings.findMany({
       where: { isCronActive: true },
     });
 
     for (const merchant of activeMerchants) {
       try {
+        // Check if enough time has passed since last sync for this merchant
+        const lastSync = await prisma.syncLog.findFirst({
+          where: {
+            shop: merchant.shop,
+            status: { in: ["SUCCESS", "IN_PROGRESS"] }
+          },
+          orderBy: { startedAt: "desc" },
+        });
+
+        if (lastSync) {
+          const minutesSinceLastSync = (Date.now() - new Date(lastSync.startedAt).getTime()) / 60000;
+
+          if (lastSync.status === "IN_PROGRESS") {
+            const minutesInProgress = (Date.now() - new Date(lastSync.startedAt).getTime()) / 60000;
+            if (minutesInProgress < 30) {
+              console.log(`[CRON] ${merchant.shop}: Sync already in progress (started ${Math.round(minutesInProgress)}m ago). Skipping.`);
+              continue;
+            }
+            console.warn(`[CRON] ${merchant.shop}: Previous sync seems stuck (>30m). Retrying.`);
+          } else if (minutesSinceLastSync < merchant.syncFrequencyMin) {
+            continue; // Not time yet
+          }
+        }
+
         const session = await prisma.session.findFirst({
           where: { shop: merchant.shop },
         });
 
-        if (!session) continue;
+        if (!session) {
+          console.warn(`[CRON] No session found for ${merchant.shop}`);
+          continue;
+        }
 
         const client = new shopify.api.clients.Graphql({ session });
-
         const decryptedApiKey = decrypt(merchant.goldApiKey);
 
         const stopLossConfig = {};
@@ -924,7 +955,20 @@ async function runPriceUpdateJob() {
         if (merchant.stopLossXPT) stopLossConfig.XPT = merchant.stopLossXPT;
         if (merchant.stopLossXPD) stopLossConfig.XPD = merchant.stopLossXPD;
 
-        // Create log entry for cron sync
+        // Load default formula for cron
+        let formulaConfig = null;
+        try {
+          const defaultFormula = await prisma.pricingFormula.findFirst({
+            where: { shop: merchant.shop, isDefault: true }
+          });
+          if (defaultFormula && defaultFormula.formulaConfig) {
+            formulaConfig = JSON.parse(defaultFormula.formulaConfig);
+          }
+        } catch (e) {
+          console.warn(`[CRON] Could not load formula for ${merchant.shop}:`, e.message);
+        }
+
+        // Create log entry
         let syncLog;
         try {
           syncLog = await prisma.syncLog.create({
@@ -938,14 +982,15 @@ async function runPriceUpdateJob() {
           console.warn(`[CRON] Could not create sync log for ${merchant.shop}`);
         }
 
-        // Sync logic
         const result = await updatePricesForShop(
           client,
           merchant.markupPercentage,
           merchant.storeCurrency,
           decryptedApiKey,
           false,
-          stopLossConfig
+          stopLossConfig,
+          formulaConfig,
+          merchant.showPriceBreakup
         );
 
         if (syncLog) {
@@ -963,24 +1008,42 @@ async function runPriceUpdateJob() {
             console.warn(`[CRON] Could not update sync log for ${merchant.shop}:`, logUpdateError.message);
           }
         }
-      } catch (error) {
-        console.error(`Error processing shop ${merchant.shop}:`, error);
+      } catch (merchantError) {
+        console.error(`[CRON] Error processing shop ${merchant.shop}:`, merchantError.message);
       }
     }
   } catch (error) {
-    console.error("Error in price update job:", error);
+    console.error("[CRON] Error in scheduler loop:", error.message);
   }
-}
-
-cron.schedule("0 */6 * * *", runPriceUpdateJob);
-
-// Serve static frontend AFTER all API/auth routes
-const distPath = path.resolve(__dirname, "frontend", "dist");
-app.use(express.static(distPath));
-app.get("*", (req, res) => {
-  res.sendFile(path.join(distPath, "index.html"));
 });
 
+// Serve dashboard for authenticated merchants
+app.get("/app", shopify.validateAuthenticatedSession(), (req, res) => {
+  res.type('html').send(getDashboardHtml());
+});
+
+// Root route: redirect to auth or show install prompt
+app.get("/", (req, res) => {
+  const shop = req.query.shop;
+  if (shop) {
+    return res.redirect(`/api/auth?shop=${shop}`);
+  }
+  res.send(`
+    <html><body style="font-family:sans-serif;text-align:center;padding:60px;">
+      <h1>MetalSync</h1>
+      <p>Install this app from the <a href="https://apps.shopify.com/">Shopify App Store</a></p>
+    </body></html>
+  `);
+});
+
+// Global error handler (production-safe)
+app.use((err, req, res, next) => {
+  console.error('[SERVER ERROR]', err);
+  res.status(err.status || 500).json({
+    error: "An internal server error occurred",
+    code: "INTERNAL_SERVER_ERROR"
+  });
+});
 
 const PORT = process.env.PORT || 8081;
 const server = app.listen(PORT, () => {

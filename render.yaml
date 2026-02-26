@@ -21,11 +21,14 @@ services:
       - key: DATABASE_URL
         description: Supabase PostgreSQL Connection String
         sync: false
+      - key: METALS_DEV_API_KEY
+        description: API Key from Metals.Dev (metals.dev)
+        sync: false
       - key: GOLD_API_KEY
-        description: API Key from GoldAPI.io
+        description: Legacy fallback, optional
         sync: false
       - key: ENCRYPTION_KEY
-        description: Random string to encrypt session data
+        description: 64-char hex key for AES-256 encryption
         sync: false
       - key: NODE_ENV
         value: "production"

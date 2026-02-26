@@ -346,7 +346,7 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
   }
 }
 
-async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldApiKey = null, isDryRun = false, stopLossConfig = {}, formulaConfig = null) {
+async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldApiKey = null, isDryRun = false, stopLossConfig = {}, formulaConfig = null, showPriceBreakup = false) {
   try {
     if (!client || typeof client.graphql !== 'function') {
       console.error('Invalid GraphQL client provided to updatePricesForShop');
@@ -458,6 +458,78 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldA
     console.log(`[INFO] Prepared ${mutations.length} mutations for bulk update`);
 
     const success = await bulkUpdateVariants(client, mutations, isDryRun);
+
+    // 6. Handle Price Breakdown Metafields (Product-level)
+    if (success && !isDryRun && showPriceBreakup) {
+      const productMetafields = [];
+      for (const product of allProducts) {
+        const metalType = extractString(product.metal_type);
+        const metalPurity = extractNumber(product.metal_purity);
+        const metalWeight = extractNumber(product.weight_grams);
+        const makingCharge = extractNumber(product.making_charge) ?? 0;
+
+        if (metalType && metalPurity && metalWeight) {
+          const pricePerGram = metalPrices[metalType];
+          if (pricePerGram) {
+            const calcResult = calculateVariantPrice(
+              metalType,
+              metalPurity,
+              metalWeight,
+              makingCharge,
+              pricePerGram,
+              globalMarkup,
+              formulaConfig
+            );
+
+            // Re-calculate to get the breakdown object if we have a calcResult
+            if (calcResult !== null && formulaConfig) {
+              const fullResult = calculatePriceFromFormula(formulaConfig, {
+                pricePerGram,
+                purity: metalPurity,
+                maxPurity: METAL_MAX_PURITY[metalType] || 24,
+                weight: metalWeight,
+                makingCharge,
+                globalMarkup,
+                metafields: { making_charge: makingCharge }
+              });
+
+              if (fullResult && fullResult.breakdown) {
+                productMetafields.push({
+                  ownerId: product.id,
+                  namespace: "metalsync",
+                  key: "price_breakdown",
+                  type: "json",
+                  value: JSON.stringify(fullResult.breakdown)
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (productMetafields.length > 0) {
+        try {
+          console.log(`[INFO] Writing price_breakdown metafields for ${productMetafields.length} products`);
+          const metafieldsMutation = `
+            mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                userErrors { field message }
+              }
+            }
+          `;
+
+          // Chunk metafield writes (Shopify allows 25 per call)
+          const MF_CHUNK = 25;
+          for (let i = 0; i < productMetafields.length; i += MF_CHUNK) {
+            const chunk = productMetafields.slice(i, i + MF_CHUNK);
+            await client.graphql(metafieldsMutation, { variables: { metafields: chunk } });
+          }
+        } catch (mfError) {
+          console.warn('[WARNING] Failed to write product price_breakdown metafields:', mfError.message);
+          // Non-fatal, continue with success status
+        }
+      }
+    }
 
     return {
       success,

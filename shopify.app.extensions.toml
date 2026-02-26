@@ -1,0 +1,4 @@
+[[extensions]]
+type = "theme"
+name = "MetalSync Price Breakup"
+handle = "price-breakup"

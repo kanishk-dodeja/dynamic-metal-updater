@@ -1,0 +1,13 @@
+{
+    "price_breakup": {
+        "title": "Price Breakdown",
+        "view_details": "View Detailed Breakdown",
+        "metal_cost": "Metal Cost",
+        "making_charge": "Making Charge",
+        "wastage": "Wastage",
+        "stone_charge": "Stone/Diamond Charge",
+        "tax": "Tax/GST",
+        "markup": "Markup",
+        "total": "Total Price"
+    }
+}
