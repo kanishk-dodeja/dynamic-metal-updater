@@ -1,4 +1,5 @@
-import { getPricePerGram } from './metalService.js';
+import { getPricePerGram, getAllPricesPerGram } from './metalService.js';
+import { calculatePriceFromFormula, getDefaultFormulaConfig } from './formulaEngine.js';
 
 const METAL_MAX_PURITY = {
   XAU: 24,
@@ -78,6 +79,7 @@ function calculateVariantPrice(
   makingCharge,
   pricePerGram,
   globalMarkup,
+  formulaConfig = null,
 ) {
   if (!metalCode || typeof metalCode !== 'string') {
     console.error('Invalid metalCode provided to calculateVariantPrice');
@@ -132,6 +134,22 @@ function calculateVariantPrice(
     return null;
   }
 
+  if (formulaConfig) {
+    const maxPurity = METAL_MAX_PURITY[metalCode] || 24;
+    const result = calculatePriceFromFormula(formulaConfig, {
+      pricePerGram,
+      purity: metalPurity,
+      maxPurity,
+      weight: metalWeight,
+      makingCharge,
+      globalMarkup,
+      metafields: { making_charge: makingCharge },
+    });
+    if (!result || result.finalPrice === null) return null;
+    return Number(result.finalPrice.toFixed(2));
+  }
+
+  // Fallback to legacy hardcoded calculation
   const maxPurity = METAL_MAX_PURITY[metalCode] || 24;
   const basePrice = pricePerGram * (metalPurity / maxPurity) * metalWeight;
   const finalPrice = (basePrice + makingCharge) * (1 + globalMarkup / 100);
@@ -148,7 +166,7 @@ function calculateVariantPrice(
   return roundedPrice;
 }
 
-async function prepareBulkMutations(products, metalPrices, globalMarkup) {
+async function prepareBulkMutations(products, metalPrices, globalMarkup, formulaConfig = null) {
   const mutations = [];
   const skippedProducts = [];
 
@@ -220,6 +238,7 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup) {
         finalMakingCharge,
         pricePerGram,
         globalMarkup,
+        formulaConfig,
       );
 
       if (newPrice === null) {
@@ -327,7 +346,7 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
   }
 }
 
-async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldApiKey = null, isDryRun = false) {
+async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldApiKey = null, isDryRun = false, stopLossConfig = {}, formulaConfig = null) {
   try {
     if (!client || typeof client.graphql !== 'function') {
       console.error('Invalid GraphQL client provided to updatePricesForShop');
@@ -392,7 +411,7 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldA
           ? String(vEdge.node.metal_type.value).trim()
           : fallbackMetal;
         if (vMetal) {
-          requiredMetals.add(vMetal);
+          requiredMetals.add(vMetal.toUpperCase());
         }
       });
     });
@@ -402,34 +421,50 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldA
       return { success: false, itemsUpdated: 0 };
     }
 
-    // 3. Only fetch from GoldAPI for the metals actually used
+    // 3. Batch fetch all metal prices in one call
+    const allPrices = await getAllPricesPerGram(currency, goldApiKey);
+    if (!allPrices) {
+      console.error(`[ERROR] Failed to fetch metal prices for currency ${currency}`);
+      return { success: false, itemsUpdated: 0 };
+    }
+
     const metalPrices = {};
     for (const metalCode of requiredMetals) {
-      // Validate metal format
-      if (!['XAU', 'XAG', 'XPT', 'XPD'].includes(metalCode.toUpperCase())) continue;
-
-      const pricePerGram = await getPricePerGram(metalCode.toUpperCase(), currency, goldApiKey);
-      if (pricePerGram !== null && typeof pricePerGram === 'number') {
-        metalPrices[metalCode] = pricePerGram;
+      if (allPrices[metalCode] !== null && allPrices[metalCode] !== undefined) {
+        metalPrices[metalCode] = allPrices[metalCode];
       }
     }
 
     if (Object.keys(metalPrices).length === 0) {
-      console.error(`[ERROR] Failed to fetch any metal prices for currency ${currency}`);
+      console.error(`[ERROR] No valid price data found for required metals: ${Array.from(requiredMetals).join(', ')}`);
       return { success: false, itemsUpdated: 0 };
     }
 
+    // 4. Apply stop-loss logic: if live price is below minimum, use the minimum
+    for (const [metalCode, livePrice] of Object.entries(metalPrices)) {
+      const minPrice = stopLossConfig[metalCode];
+      if (minPrice && typeof minPrice === 'number' && minPrice > 0 && livePrice < minPrice) {
+        console.log(`[STOP-LOSS] ${metalCode}: Live price $${livePrice.toFixed(4)}/g is below minimum $${minPrice.toFixed(4)}/g. Using minimum.`);
+        metalPrices[metalCode] = minPrice;
+      }
+    }
+
     console.log(
-      `[INFO] Successfully fetched prices for metals in ${currency}: ${Object.keys(metalPrices).join(', ')}`,
+      `[INFO] Using prices for metals in ${currency}: ${Object.entries(metalPrices).map(([k, v]) => `${k}=$${v.toFixed(2)}`).join(', ')}`,
     );
 
-    // 4. Prepare and execute mutations
-    const mutations = await prepareBulkMutations(allProducts, metalPrices, globalMarkup);
+    // 5. Prepare and execute mutations
+    const mutations = await prepareBulkMutations(allProducts, metalPrices, globalMarkup, formulaConfig);
     console.log(`[INFO] Prepared ${mutations.length} mutations for bulk update`);
 
     const success = await bulkUpdateVariants(client, mutations, isDryRun);
 
-    return { success, itemsUpdated: mutations.length };
+    return {
+      success,
+      itemsUpdated: mutations.length,
+      metalPricesUsed: metalPrices,
+      stopLossTriggered: Object.keys(metalPrices).filter(m => stopLossConfig[m] && metalPrices[m] === stopLossConfig[m])
+    };
   } catch (error) {
     console.error(`[ERROR] Exception in updatePricesForShop: ${error.message}`);
     return { success: false, itemsUpdated: 0 };

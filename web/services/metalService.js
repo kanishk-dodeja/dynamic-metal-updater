@@ -1,78 +1,68 @@
 import axios from 'axios';
 
-const GOLD_API_BASE = 'https://www.goldapi.io/api';
-const AXIOS_TIMEOUT = 5000;
+const METALS_DEV_API_BASE = 'https://api.metals.dev/v1/latest';
+const AXIOS_TIMEOUT = 10000;
 
-async function fetchMetalPrice(metalCode, currency = 'USD', apiKey = null) {
+let priceCache = { data: null, currency: null, timestamp: 0, TTL: 60000 }; // 1 min TTL
+
+const metalKeyMap = {
+  XAU: 'gold',
+  XAG: 'silver',
+  XPT: 'platinum',
+  XPD: 'palladium'
+};
+
+async function fetchAllMetalPrices(currency = 'USD', apiKey = null) {
   try {
-    let finalApiKey = (apiKey || process.env.GOLD_API_KEY || "").trim();
+    let finalApiKey = (apiKey || process.env.METALS_DEV_API_KEY || process.env.GOLD_API_KEY || "").trim();
     // Remove potential surrounding quotes if the user pasted them in Render
     finalApiKey = finalApiKey.replace(/^["'](.+)["']$/, '$1');
 
     if (!finalApiKey) {
-      console.error('Gold API Key not provided and GOLD_API_KEY not configured');
+      console.error('API Key not provided and METALS_DEV_API_KEY not configured');
       return {
         success: false,
-        error: 'GOLD_API_KEY_NOT_CONFIGURED',
+        error: 'API_KEY_NOT_CONFIGURED',
       };
     }
 
-    if (!metalCode || typeof metalCode !== 'string') {
-      console.error('Invalid metalCode provided');
-      return {
-        success: false,
-        error: 'INVALID_METAL_CODE',
-      };
+    if (
+      priceCache.data &&
+      priceCache.currency === currency &&
+      (Date.now() - priceCache.timestamp) < priceCache.TTL
+    ) {
+      return { success: true, data: priceCache.data };
     }
 
-    const response = await axios.get(`${GOLD_API_BASE}/${metalCode}/${currency}`, {
-      headers: {
-        'x-access-token': finalApiKey,
+    const response = await axios.get(METALS_DEV_API_BASE, {
+      params: {
+        api_key: finalApiKey,
+        currency,
+        unit: 'g'
       },
       timeout: AXIOS_TIMEOUT,
     });
 
-    if (response.status !== 200) {
-      console.error(`Unexpected response status ${response.status}`);
-      return {
-        success: false,
-        error: `HTTP_STATUS_${response.status}`,
+    if (response.data && response.data.status === 'success' && response.data.metals) {
+      priceCache = {
+        data: response.data.metals,
+        currency,
+        timestamp: Date.now(),
+        TTL: 60000
       };
-    }
 
-    const { data } = response;
-
-    if (
-      !data ||
-      typeof data !== 'object' ||
-      data.price === null ||
-      data.price === undefined ||
-      typeof data.price !== 'number'
-    ) {
-      console.error(`Missing or invalid price field in API response for ${metalCode}`);
+      return {
+        success: true,
+        data: response.data.metals
+      };
+    } else {
+      console.error(`Unexpected API response from Metals.Dev: ${JSON.stringify(response.data)}`);
       return {
         success: false,
         error: 'INVALID_API_RESPONSE',
       };
     }
 
-    if (data.price <= 0) {
-      console.error(`Invalid price value (${data.price}) for ${metalCode}`);
-      return {
-        success: false,
-        error: 'INVALID_PRICE_VALUE',
-      };
-    }
-
-    return {
-      success: true,
-      data: {
-        metalCode: data.metal || metalCode,
-        pricePerOunce: data.price,
-        currency: data.currency || currency,
-        timestamp: data.timestamp,
-      },
-    };
   } catch (error) {
     let errorReason = 'UNKNOWN_ERROR';
 
@@ -89,7 +79,7 @@ async function fetchMetalPrice(metalCode, currency = 'USD', apiKey = null) {
     }
 
     console.error(
-      `Failed to fetch metal price for ${metalCode}: [${errorReason}] ${error.message}`,
+      `Failed to fetch all metal prices: [${errorReason}] ${error.message}`,
     );
 
     return {
@@ -100,16 +90,20 @@ async function fetchMetalPrice(metalCode, currency = 'USD', apiKey = null) {
 }
 
 async function getPricePerGram(metalCode, currency = 'USD', apiKey = null) {
-  const troyOunceToGram = 31.1035;
-
-  const result = await fetchMetalPrice(metalCode, currency, apiKey);
+  const result = await fetchAllMetalPrices(currency, apiKey);
 
   if (!result.success) {
     console.warn(`getPricePerGram skipped for ${metalCode} (${currency}): ${result.error}`);
     return null;
   }
 
-  const pricePerGram = result.data.pricePerOunce / troyOunceToGram;
+  const mappedKey = metalKeyMap[metalCode];
+  if (!mappedKey) {
+    console.error(`Invalid metalCode provided: ${metalCode}`);
+    return null;
+  }
+
+  const pricePerGram = result.data[mappedKey];
 
   if (typeof pricePerGram !== 'number' || pricePerGram <= 0) {
     console.error(
@@ -121,7 +115,79 @@ async function getPricePerGram(metalCode, currency = 'USD', apiKey = null) {
   return pricePerGram;
 }
 
+async function fetchMetalPrice(metalCode, currency = 'USD', apiKey = null) {
+  if (!metalCode || typeof metalCode !== 'string') {
+    console.error('Invalid metalCode provided');
+    return {
+      success: false,
+      error: 'INVALID_METAL_CODE',
+    };
+  }
+
+  const result = await fetchAllMetalPrices(currency, apiKey);
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error,
+    };
+  }
+
+  const mappedKey = metalKeyMap[metalCode];
+  if (!mappedKey) {
+    console.error(`Invalid metalCode provided: ${metalCode}`);
+    return {
+      success: false,
+      error: 'INVALID_METAL_CODE',
+    };
+  }
+
+  const pricePerGram = result.data[mappedKey];
+
+  if (typeof pricePerGram !== 'number' || pricePerGram <= 0) {
+    console.error(`Invalid price value (${pricePerGram}) for ${metalCode}`);
+    return {
+      success: false,
+      error: 'INVALID_PRICE_VALUE',
+    };
+  }
+
+  const troyOunceToGram = 31.1035;
+  const pricePerOunce = pricePerGram * troyOunceToGram;
+
+  return {
+    success: true,
+    data: {
+      metalCode,
+      pricePerOunce,
+      currency,
+      timestamp: priceCache.timestamp || Date.now(),
+    },
+  };
+}
+
+async function getAllPricesPerGram(currency = 'USD', apiKey = null) {
+  const result = await fetchAllMetalPrices(currency, apiKey);
+
+  if (!result.success) {
+    console.warn(`getAllPricesPerGram skipped (${currency}): ${result.error}`);
+    return null;
+  }
+
+  const prices = {};
+  for (const [code, mappedKey] of Object.entries(metalKeyMap)) {
+    const price = result.data[mappedKey];
+    if (typeof price === 'number' && price > 0) {
+      prices[code] = price;
+    }
+  }
+
+  return Object.keys(prices).length > 0 ? prices : null;
+}
+
 export {
   fetchMetalPrice,
+  fetchAllMetalPrices,
   getPricePerGram,
+  getAllPricesPerGram,
 };

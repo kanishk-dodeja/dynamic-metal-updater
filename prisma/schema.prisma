@@ -34,6 +34,67 @@ model MerchantSettings {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   syncLogs          SyncLog[]
+  
+  // Stop-loss pricing: minimum price per gram for each metal
+  stopLossXAU      Float?    // Gold minimum price per gram
+  stopLossXAG      Float?    // Silver minimum price per gram
+  stopLossXPT      Float?    // Platinum minimum price per gram
+  stopLossXPD      Float?    // Palladium minimum price per gram
+  
+  // Sync frequency (in minutes). Default 360 = 6 hours
+  syncFrequencyMin Int       @default(360)
+  
+  // Price breakup widget settings
+  showPriceBreakup Boolean   @default(false)
+
+  formulas         PricingFormula[]
+  productConfigs   ProductConfig[]
+}
+
+model PricingFormula {
+  id              String   @id @default(cuid())
+  shop            String
+  merchant        MerchantSettings @relation(fields: [shop], references: [shop])
+  name            String   // e.g. "Gold Jewelry Standard", "Bullion Bars"
+  isDefault       Boolean  @default(false)
+  
+  // Formula components — each is a JSON string defining the calculation
+  // Structure: ordered array of { field, label, type, defaultValue, unit }
+  // type: "metal_price" | "weight" | "purity" | "fixed" | "percentage"
+  // unit: "currency" | "percentage" | "grams" | "karat" | "millesimal"
+  formulaConfig   String   @db.Text  // JSON string
+  
+  // Which products/tags this formula applies to (comma-separated tags, or "*" for all)
+  applyToTags     String   @default("auto_price_update")
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  productConfigs  ProductConfig[]
+
+  @@index([shop])
+}
+
+model ProductConfig {
+  id                String   @id @default(cuid())
+  shop              String
+  merchant          MerchantSettings @relation(fields: [shop], references: [shop])
+  shopifyProductId  String   // e.g. "gid://shopify/Product/123"
+  shopifyVariantId  String?  // if variant-specific config
+  metalType         String    // XAU, XAG, XPT, XPD
+  metalPurity       Float
+  weightGrams       Float
+  makingCharge      Float     @default(0)
+  
+  // Optional: link to a specific formula
+  formulaId         String?
+  formula           PricingFormula? @relation(fields: [formulaId], references: [id])
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shop, shopifyProductId, shopifyVariantId])
+  @@index([shop])
 }
 
 model SyncLog {
