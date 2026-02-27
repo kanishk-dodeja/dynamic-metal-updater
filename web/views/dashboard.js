@@ -13,21 +13,34 @@ export function getDashboardHtml() {
     document.addEventListener("DOMContentLoaded", () => {
       const urlParams = new URLSearchParams(window.location.search);
       const host = urlParams.get('host');
+      const shop = urlParams.get('shop');
       
       if (host && window.top !== window.self) {
         // App is stuck inside Shopify Admin iframe but is configured as non-embedded.
-        // Force break out using App Bridge:
         const AppBridge = window['app-bridge'];
         const actions = window['app-bridge'].actions;
         
-        const app = AppBridge.default({
-          apiKey: document.querySelector('meta[name="shopify-api-key"]')?.content || "", // Will be gracefully handled if empty
-          host: host,
-          forceRedirect: true
-        });
+        try {
+            const app = AppBridge.default({
+              apiKey: document.querySelector('meta[name="shopify-api-key"]')?.content || "",
+              host: host,
+              forceRedirect: true
+            });
 
-        const redirect = actions.Redirect.create(app);
-        redirect.dispatch(actions.Redirect.Action.REMOTE, window.location.href);
+            const redirect = actions.Redirect.create(app);
+            
+            // Dispatch a remote redirect to force Shopify to break the frame
+            redirect.dispatch(actions.Redirect.Action.REMOTE, window.location.href);
+            
+            // Fallback for strict browser security policies (Safari/Chrome block)
+            setTimeout(() => {
+                const targetUrl = window.location.origin + '/app?shop=' + shop + '&host=' + host;
+                window.open(targetUrl, '_top');
+            }, 500);
+        } catch (e) {
+            console.warn("App Bridge initialization failed, falling back to manual top-level redirect", e);
+            window.open(window.location.href, '_top');
+        }
       }
     });
   </script>
