@@ -64,6 +64,30 @@ const METAFIELD_DEFINITIONS = [
     description: "Variant specific making charge override",
     type: "number_decimal",
     ownerType: "PRODUCTVARIANT"
+  },
+  {
+    name: "Wastage Percentage",
+    namespace: "metalsync",
+    key: "wastage_percentage",
+    description: "Wastage percentage for calculations",
+    type: "number_decimal",
+    ownerType: "PRODUCT"
+  },
+  {
+    name: "Stone Charge",
+    namespace: "metalsync",
+    key: "stone_charge",
+    description: "Fixed stone or mounting charge",
+    type: "number_decimal",
+    ownerType: "PRODUCT"
+  },
+  {
+    name: "Price Breakdown",
+    namespace: "metalsync",
+    key: "price_breakdown",
+    description: "Last calculated price breakdown details",
+    type: "json",
+    ownerType: "PRODUCT"
   }
 ];
 

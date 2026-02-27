@@ -29,6 +29,7 @@ app.use((req, res, next) => {
 
 // Body Size Check Middleware
 app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.url}`);
   if (req.headers['content-length'] && parseInt(req.headers['content-length']) > 10240) {
     return res.status(413).json({ error: "Request body too large", code: "PAYLOAD_TOO_LARGE" });
   }
@@ -43,7 +44,7 @@ const shopify = shopifyApp({
     apiSecretKey: process.env.SHOPIFY_API_SECRET,
     scopes: process.env.SCOPES?.split(","),
     hostName: process.env.SHOPIFY_APP_URL?.replace(/https?:\/\//, ""),
-    apiVersion: ApiVersion.July24,
+    apiVersion: ApiVersion.October24,
     isEmbeddedApp: false,
   },
   sessionStorage: new PrismaSessionStorage(prisma),
@@ -181,12 +182,14 @@ app.get("/api/debug/health", async (req, res) => {
     const apiStartTime = Date.now();
     try {
       const apiResult = await fetchMetalPrice("XAU");
-      if (apiResult && apiResult.success) {
+      if (apiResult && apiResult.success && apiResult.data) {
+        const pricePerOz = apiResult.data.pricePerOunce;
         health.checks.goldapi.status = "healthy";
-        health.checks.goldapi.message = "Successfully fetched XAU price";
+        health.checks.goldapi.price = pricePerOz ? Number(pricePerOz.toFixed(2)) : null;
+        health.checks.goldapi.message = `Successfully fetched XAU price: $${pricePerOz ? pricePerOz.toFixed(2) : 'N/A'}/oz`;
       } else {
         health.checks.goldapi.status = "unhealthy";
-        health.checks.goldapi.message = apiResult.error || "API returned error";
+        health.checks.goldapi.message = apiResult?.error || "API returned error";
       }
       health.checks.goldapi.latency = Date.now() - apiStartTime;
     } catch (apiError) {
@@ -456,6 +459,10 @@ app.post("/api/products/configure-bulk", async (req, res) => {
   const client = new shopify.api.clients.Graphql({ session });
 
   for (let config of products) {
+    if (!config || typeof config !== 'object') {
+      results.errors.push({ error: "Invalid product configuration object", code: "INVALID_INPUT" });
+      continue;
+    }
     let { productId, metalType, metalPurity, weightGrams, makingCharge = 0, addTag = true } = config;
 
     // Sanitization & Clamping
@@ -535,6 +542,7 @@ app.post("/api/settings", async (req, res) => {
     stopLossXPT,
     stopLossXPD,
     syncFrequencyMin,
+    isCronActive,
     showPriceBreakup
   } = req.body;
 
@@ -566,6 +574,7 @@ app.post("/api/settings", async (req, res) => {
     if (stopLossXPD !== undefined) updateData.stopLossXPD = stopLossXPD || null;
     if (syncFrequencyMin !== undefined) updateData.syncFrequencyMin = syncFrequencyMin;
     if (showPriceBreakup !== undefined) updateData.showPriceBreakup = !!showPriceBreakup;
+    if (isCronActive !== undefined) updateData.isCronActive = !!isCronActive;
 
     const settings = await prisma.merchantSettings.upsert({
       where: { shop },
@@ -750,6 +759,18 @@ app.get("/api/logs", async (req, res) => {
     res.json(logs);
   } catch (error) {
     res.json([]); // Return empty if table doesn't exist yet
+  }
+});
+
+app.post("/api/logs/clear", async (req, res) => {
+  const shop = res.locals.shopify?.session?.shop;
+  if (!shop) return res.status(401).json({ error: "Unauthorized" });
+
+  try {
+    await prisma.syncLog.deleteMany({ where: { shop } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1063,11 +1084,37 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 8081;
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`Server running on port ${PORT} (host: 0.0.0.0)`);
+
+  // Cleanup stuck syncs on startup
+  try {
+    const staleSyncs = await prisma.syncLog.updateMany({
+      where: { status: "IN_PROGRESS" },
+      data: {
+        status: "FAILED",
+        message: "Server restarted during sync"
+      }
+    });
+    if (staleSyncs.count > 0) {
+      console.log(`[CLEANUP] Marked ${staleSyncs.count} stale sync(s) as FAILED.`);
+    }
+  } catch (error) {
+    console.warn("[CLEANUP] Failed to clear stale syncs:", error.message);
+  }
 });
 
 server.on('error', (err) => {
   console.error("Failed to start server:", err);
+  process.exit(1);
+});
+
+// Render production stability: Catch unhandled promises and exceptions to log them before crashing
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Uncaught Exception thrown:', err);
   process.exit(1);
 });

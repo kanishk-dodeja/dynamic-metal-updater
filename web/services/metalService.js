@@ -15,8 +15,12 @@ const metalKeyMap = {
 async function fetchAllMetalPrices(currency = 'USD', apiKey = null) {
   try {
     let finalApiKey = (apiKey || process.env.METALS_DEV_API_KEY || process.env.GOLD_API_KEY || "").trim();
-    // Remove potential surrounding quotes if the user pasted them in Render
-    finalApiKey = finalApiKey.replace(/^["'](.+)["']$/, '$1');
+
+    // Robust cleanup: remove quotes, "Key:", or spaces
+    finalApiKey = finalApiKey.replace(/^["'](.+)["']$/, '$1')
+      .replace(/^api_key\s*:\s*/i, '')
+      .replace(/^key\s*:\s*/i, '')
+      .trim();
 
     if (!finalApiKey) {
       console.error('API Key not provided and METALS_DEV_API_KEY not configured');

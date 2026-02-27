@@ -28,11 +28,16 @@ export function verifyWebhook(req, res, next) {
 
     let hashEquals = false;
     try {
-        hashEquals = crypto.timingSafeEqual(
-            Buffer.from(generatedHash),
-            Buffer.from(hmacHeader)
-        );
+        const generatedBuffer = Buffer.from(generatedHash, 'base64');
+        const hmacBuffer = Buffer.from(hmacHeader, 'base64');
+
+        if (generatedBuffer.length === hmacBuffer.length) {
+            hashEquals = crypto.timingSafeEqual(generatedBuffer, hmacBuffer);
+        } else {
+            console.error('[GDPR Webhook] Error: HMAC length mismatch');
+        }
     } catch (e) {
+        console.error('[GDPR Webhook] Error during HMAC comparison:', e.message);
         hashEquals = false;
     }
 

@@ -42,24 +42,45 @@ async function fetchTaggedProducts(client, cursor = null) {
     }
   `;
 
-  try {
-    if (!client || typeof client.graphql !== 'function') {
-      console.error('Invalid GraphQL client provided');
-      return null;
+  return executeWithRetry(client, query, { cursor });
+}
+
+async function executeWithRetry(client, query, variables = {}, retries = 3, delay = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await client.graphql(query, { variables });
+
+      // Log cost if available
+      const cost = response?.body?.extensions?.cost;
+      if (cost) {
+        console.log(`[API-COST] Requested: ${cost.requestedQueryCost}, Actual: ${cost.actualQueryCost}, Remaining: ${cost.throttleStatus?.currentlyAvailable ?? 'N/A'}`);
+      }
+
+      const errors = response?.body?.errors;
+      if (errors && errors.length > 0) {
+        const isThrottled = errors.some(err => err.extensions?.code === 'THROTTLED');
+        if (isThrottled && i < retries - 1) {
+          console.warn(`[THROTTLED] GraphQL rate limit hit. Retrying in ${delay * (i + 1)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+          continue;
+        }
+      }
+
+      if (!response || !response.body || !response.body.data) {
+        console.error('Malformed GraphQL response');
+        return null;
+      }
+
+      // Return the inner data directly to match previous behavior
+      const data = response.body.data;
+      return data.products || data.productVariantsBulkUpdate || data;
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      console.warn(`[RETRY] GraphQL error: ${error.message}. Retrying...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
-
-    const response = await client.graphql(query, { variables: { cursor } });
-
-    if (!response || !response.body || !response.body.data || !response.body.data.products) {
-      console.error('Malformed GraphQL response when fetching tagged products');
-      return null;
-    }
-
-    return response.body.data.products;
-  } catch (error) {
-    console.error('Error fetching tagged products:', error.message);
-    return null;
   }
+  return null;
 }
 
 function extractNumber(metafield) {
@@ -136,7 +157,7 @@ function calculateVariantPrice(
   }
 
   if (formulaConfig) {
-    const maxPurity = METAL_MAX_PURITY[metalCode] || 24;
+    const maxPurity = METAL_MAX_PURITY[metalCode] || (metalCode === "XAG" || metalCode === "XPT" || metalCode === "XPD" ? 1000 : 24);
     const result = calculatePriceFromFormula(formulaConfig, {
       pricePerGram,
       purity: metalPurity,
@@ -147,11 +168,14 @@ function calculateVariantPrice(
       metafields: { making_charge: makingCharge },
     });
     if (!result || result.finalPrice === null) return null;
-    return Number(result.finalPrice.toFixed(2));
+    return {
+      price: Number(result.finalPrice.toFixed(2)),
+      breakdown: result.breakdown
+    };
   }
 
   // Fallback to legacy hardcoded calculation
-  const maxPurity = METAL_MAX_PURITY[metalCode] || 24;
+  const maxPurity = METAL_MAX_PURITY[metalCode] || (metalCode === "XAG" || metalCode === "XPT" || metalCode === "XPD" ? 1000 : 24);
   const basePrice = pricePerGram * (metalPurity / maxPurity) * metalWeight;
   const finalPrice = (basePrice + makingCharge) * (1 + globalMarkup / 100);
 
@@ -162,9 +186,14 @@ function calculateVariantPrice(
     return null;
   }
 
-  const roundedPrice = Number(finalPrice.toFixed(2));
-
-  return roundedPrice;
+  return {
+    price: Number(finalPrice.toFixed(2)),
+    breakdown: {
+      metal_cost: { label: "Metal Cost", value: Number(basePrice.toFixed(2)) },
+      making: { label: "Making/Markup", value: Number((finalPrice - basePrice).toFixed(2)) },
+      final_price: { label: "Final Price", value: Number(finalPrice.toFixed(2)) }
+    }
+  };
 }
 
 async function prepareBulkMutations(products, metalPrices, globalMarkup, formulaConfig = null) {
@@ -202,6 +231,11 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup, formula
     const metalWeight = extractNumber(product.weight_grams);
     const makingCharge = extractNumber(product.making_charge) ?? 0;
 
+    if (!product.variants || !Array.isArray(product.variants.edges)) {
+      console.warn(`[SKIP] Product ${product.id}: missing variants or edges`);
+      continue;
+    }
+
     for (const variantEdge of product.variants.edges) {
       if (!variantEdge || !variantEdge.node || !variantEdge.node.id) {
         console.warn(`[SKIP] Product ${product.id}: malformed variant edge`);
@@ -232,7 +266,7 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup, formula
         continue;
       }
 
-      const newPrice = calculateVariantPrice(
+      const calcResult = calculateVariantPrice(
         finalMetalType,
         finalMetalPurity,
         finalMetalWeight,
@@ -242,7 +276,7 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup, formula
         formulaConfig,
       );
 
-      if (newPrice === null) {
+      if (!calcResult || calcResult.price === null) {
         console.warn(
           `[SKIP] Product ${product.id} Variant ${variantEdge.node.id}: price calculation failed`,
         );
@@ -251,8 +285,16 @@ async function prepareBulkMutations(products, metalPrices, globalMarkup, formula
 
       mutations.push({
         id: variantEdge.node.id,
-        price: newPrice.toString(),
+        price: calcResult.price.toString(),
         productId: product.id,
+        metafields: [
+          {
+            namespace: "custom",
+            key: "price_breakdown",
+            type: "json",
+            value: JSON.stringify(calcResult.breakdown)
+          }
+        ]
       });
     }
   }
@@ -289,6 +331,14 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
         productVariants {
           id
           price
+          metafields(first: 10) {
+            edges {
+              node {
+                key
+                value
+              }
+            }
+          }
         }
         userErrors {
           field
@@ -309,7 +359,9 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
     for (const m of mutations) {
       const pid = m.productId;
       if (!groupedByProduct[pid]) groupedByProduct[pid] = [];
-      groupedByProduct[pid].push({ id: m.id, price: m.price });
+      const variantInput = { id: m.id, price: m.price };
+      if (m.metafields) variantInput.metafields = m.metafields;
+      groupedByProduct[pid].push(variantInput);
     }
 
     const productIds = Object.keys(groupedByProduct);
@@ -319,22 +371,14 @@ async function bulkUpdateVariants(client, mutations, isDryRun = false) {
       const variants = groupedByProduct[productId];
       console.log(`[INFO] Updating product ${productId} (${variants.length} variant(s))...`);
 
-      const response = await client.graphql(query, {
-        variables: { productId, input: variants },
-      });
+      const responseData = await executeWithRetry(client, query, { productId, input: variants });
 
-      if (!response || !response.body || !response.body.data) {
-        console.error(`[ERROR] Malformed GraphQL response for product ${productId}`);
+      if (!responseData) {
+        console.error(`[ERROR] Failed to update product ${productId} after retries`);
         continue;
       }
 
-      const { productVariantsBulkUpdate } = response.body.data;
-      if (!productVariantsBulkUpdate) {
-        console.error(`[ERROR] Bulk update data missing for product ${productId}`);
-        continue;
-      }
-
-      const { userErrors } = productVariantsBulkUpdate;
+      const { userErrors } = responseData;
       if (Array.isArray(userErrors) && userErrors.length > 0) {
         console.error(`[ERROR] Product ${productId} had ${userErrors.length} error(s)`);
         userErrors.forEach((err) => console.error(`  - ${err.field}: ${err.message}`));
@@ -408,7 +452,7 @@ async function updatePricesForShop(client, globalMarkup, currency = 'USD', goldA
         ? String(product.metal_type.value).trim()
         : null;
 
-      product.variants.edges.forEach((vEdge) => {
+      product.variants?.edges?.forEach((vEdge) => {
         if (!vEdge || !vEdge.node) return;
         const vMetal = vEdge.node.metal_type && vEdge.node.metal_type.value
           ? String(vEdge.node.metal_type.value).trim()

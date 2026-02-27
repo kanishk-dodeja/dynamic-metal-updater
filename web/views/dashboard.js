@@ -418,15 +418,11 @@ export function getDashboardHtml() {
           </div>
           <div class="form-group">
             <label for="syncFrequencyMin">Sync Frequency</label>
-            <select id="syncFrequencyMin">
-              <option value="15">Every 15 minutes</option>
-              <option value="30">Every 30 minutes</option>
-              <option value="60">Every 1 hour</option>
-              <option value="180">Every 3 hours</option>
-              <option value="360" selected>Every 6 hours</option>
-              <option value="720">Every 12 hours</option>
-              <option value="1440">Once per day</option>
             </select>
+          </div>
+          <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+            <input type="checkbox" id="isCronActive" style="width: 20px; height: 20px;">
+            <label for="isCronActive" style="margin: 0;">Enable Automatic Sync (Cron)</label>
           </div>
         </div>
       </div>
@@ -579,7 +575,10 @@ export function getDashboardHtml() {
     </div>
 
     <div class="card" id="activity-card">
-      <h2 class="card-title">Activity Log</h2>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 class="card-title" style="margin: 0;">Activity Log</h2>
+        <button class="btn btn-outline btn-sm" id="clearLogsBtn" style="color: var(--danger-color);">Clear Logs</button>
+      </div>
       <div class="table-container">
         <table>
           <thead>
@@ -656,11 +655,16 @@ export function getDashboardHtml() {
         banner.className = 'banner banner-warning';
         statusText.textContent = 'System degraded: Check connection settings';
       }
-      if (data.checks.goldapi.status === 'healthy' && data.checks.goldapi.message) {
-        const match = data.checks.goldapi.message.match(/\\$(\\d+\\.\\d+)/);
-        if (match) {
-          document.getElementById('gold-price').textContent = '$' + match[1];
+      if (data.checks.goldapi.status === 'healthy') {
+        if (data.checks.goldapi.price) {
+          document.getElementById('gold-price').textContent = '$' + data.checks.goldapi.price;
           document.getElementById('price-meta').textContent = 'Live market price per ounce';
+        } else if (data.checks.goldapi.message) {
+          const match = data.checks.goldapi.message.match(/\\$(\\d+\\.\\d+)/);
+          if (match) {
+            document.getElementById('gold-price').textContent = '$' + match[1];
+            document.getElementById('price-meta').textContent = 'Live market price per ounce';
+          }
         }
       }
     }
@@ -677,6 +681,9 @@ export function getDashboardHtml() {
       document.getElementById('stopLossXAG').value = settings.stopLossXAG || '';
       document.getElementById('stopLossXPT').value = settings.stopLossXPT || '';
       document.getElementById('stopLossXPD').value = settings.stopLossXPD || '';
+      if (document.getElementById('isCronActive')) {
+        document.getElementById('isCronActive').checked = settings.isCronActive !== false;
+      }
       document.querySelectorAll('.currency-symbol').forEach(el => el.textContent = state.currency);
     }
 
@@ -694,6 +701,7 @@ export function getDashboardHtml() {
         stopLossXAG: document.getElementById('stopLossXAG').value ? parseFloat(document.getElementById('stopLossXAG').value) : null,
         stopLossXPT: document.getElementById('stopLossXPT').value ? parseFloat(document.getElementById('stopLossXPT').value) : null,
         stopLossXPD: document.getElementById('stopLossXPD').value ? parseFloat(document.getElementById('stopLossXPD').value) : null,
+        isCronActive: document.getElementById('isCronActive')?.checked ?? true,
       };
       const result = await fetchData('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       state.loading = false; btn.disabled = false; btn.textContent = originalText;
@@ -851,7 +859,7 @@ export function getDashboardHtml() {
     function addStepToUI(s = {}) {
       const div = document.createElement('div');
       div.className = 'formula-step';
-      div.innerHTML =
+      div.innerHTML = ''; // Placeholder to keep context
         '<div>' +
           '<label style="font-size: 10px;">Label</label>' +
           '<input type="text" class="step-label" value="' + (s.label || '') + '">' +
@@ -950,11 +958,22 @@ export function getDashboardHtml() {
     document.getElementById('saveSettings').addEventListener('click', () => saveAllSettings(false));
     document.getElementById('saveStopLoss').addEventListener('click', () => saveAllSettings(true));
     document.getElementById('runSync').addEventListener('click', runSync);
+    document.getElementById('clearLogsBtn').addEventListener('click', clearLogs);
 
     document.getElementById('modeSimple').addEventListener('click', () => setFormulaMode('simple'));
     document.getElementById('modeAdvanced').addEventListener('click', () => setFormulaMode('advanced'));
 
-    document.addEventListener('DOMContentLoaded', () => { loadHealth(); loadSettings(); loadProducts(); loadFormulas(); loadLogs(); setInterval(loadHealth, 60000); });
+    document.addEventListener('DOMContentLoaded', async () => {
+      const init = async (fn, name) => {
+        try { await fn(); } catch (e) { console.error('Failed to load ' + name + ':', e); }
+      };
+      await init(loadHealth, 'Health');
+      await init(loadSettings, 'Settings');
+      await init(loadProducts, 'Products');
+      await init(loadFormulas, 'Formulas');
+      await init(loadLogs, 'Logs');
+      setInterval(loadHealth, 60000);
+    });
   </script>
 </body>
 </html>`;
