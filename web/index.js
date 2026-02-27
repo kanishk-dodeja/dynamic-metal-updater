@@ -21,7 +21,11 @@ export const app = express();
 // Security Headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  // Allow Shopify to frame the app for the initial load/redirect
+  res.setHeader(
+    'Content-Security-Policy',
+    `frame-ancestors https://*.myshopify.com https://admin.shopify.com;`
+  );
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
@@ -417,7 +421,7 @@ app.post("/api/products/configure", async (req, res) => {
       },
     });
 
-    const metafieldErrors = metafieldsResponse.body.data.metafieldsSet.userErrors;
+    const metafieldErrors = metafieldsResponse.body?.data?.metafieldsSet?.userErrors || [];
     if (metafieldErrors.length > 0) {
       return res.status(400).json({ error: "Failed to set metafields", details: metafieldErrors, code: "SHOPIFY_ERROR" });
     }
@@ -444,148 +448,159 @@ app.post("/api/products/configure", async (req, res) => {
 });
 
 app.post("/api/products/configure-bulk", async (req, res) => {
-  const session = res.locals.shopify.session;
-  const { products } = req.body;
+  try {
+    const session = res.locals.shopify.session;
+    const { products } = req.body;
 
-  if (!Array.isArray(products)) {
-    return res.status(400).json({ error: "products must be an array" });
-  }
-
-  if (products.length > 50) {
-    return res.status(400).json({ error: "Maximum 50 products per bulk request" });
-  }
-
-  const results = { configured: 0, errors: [] };
-  const client = new shopify.api.clients.Graphql({ session });
-
-  for (let config of products) {
-    if (!config || typeof config !== 'object') {
-      results.errors.push({ error: "Invalid product configuration object", code: "INVALID_INPUT" });
-      continue;
-    }
-    let { productId, metalType, metalPurity, weightGrams, makingCharge = 0, addTag = true } = config;
-
-    // Sanitization & Clamping
-    productId = typeof productId === 'string' ? productId.trim() : productId;
-    metalType = typeof metalType === 'string' ? metalType.trim().toUpperCase() : metalType;
-
-    const allowedMetals = ["XAU", "XAG", "XPT", "XPD"];
-    if (!productId || !allowedMetals.includes(metalType)) {
-      results.errors.push({ productId, error: "Invalid product ID or metal type", code: "INVALID_INPUT" });
-      continue;
+    if (!Array.isArray(products)) {
+      return res.status(400).json({ error: "products must be an array" });
     }
 
-    metalPurity = Math.max(0, parseFloat(metalPurity));
-    weightGrams = Math.max(0, parseFloat(weightGrams));
-    makingCharge = Math.max(0, parseFloat(makingCharge));
-
-    if (!metalPurity || !weightGrams) {
-      results.errors.push({ productId, error: "Purity and weight must be positive", code: "INVALID_INPUT" });
-      continue;
+    if (products.length > 50) {
+      return res.status(400).json({ error: "Maximum 50 products per bulk request" });
     }
 
-    try {
-      // 1. Set Metafields
-      const metafieldsMutation = `
+    const results = { configured: 0, errors: [] };
+    const client = new shopify.api.clients.Graphql({ session });
+
+    for (let config of products) {
+      if (!config || typeof config !== 'object') {
+        results.errors.push({ error: "Invalid product configuration object", code: "INVALID_INPUT" });
+        continue;
+      }
+      let { productId, metalType, metalPurity, weightGrams, makingCharge = 0, addTag = true } = config;
+
+      // Sanitization & Clamping
+      productId = typeof productId === 'string' ? productId.trim() : productId;
+      metalType = typeof metalType === 'string' ? metalType.trim().toUpperCase() : metalType;
+
+      const allowedMetals = ["XAU", "XAG", "XPT", "XPD"];
+      if (!productId || !allowedMetals.includes(metalType)) {
+        results.errors.push({ productId, error: "Invalid product ID or metal type", code: "INVALID_INPUT" });
+        continue;
+      }
+
+      metalPurity = Math.max(0, parseFloat(metalPurity));
+      weightGrams = Math.max(0, parseFloat(weightGrams));
+      makingCharge = Math.max(0, parseFloat(makingCharge));
+
+      if (!metalPurity || !weightGrams) {
+        results.errors.push({ productId, error: "Purity and weight must be positive", code: "INVALID_INPUT" });
+        continue;
+      }
+
+      try {
+        // 1. Set Metafields
+        const metafieldsMutation = `
         mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) {
             userErrors { message }
           }
         }
       `;
-      const mfRes = await client.graphql(metafieldsMutation, {
-        variables: {
-          metafields: [
-            { ownerId: productId, namespace: "custom", key: "metal_type", type: "single_line_text_field", value: metalType },
-            { ownerId: productId, namespace: "custom", key: "metal_purity", type: "number_decimal", value: String(metalPurity) },
-            { ownerId: productId, namespace: "custom", key: "weight_grams", type: "number_decimal", value: String(weightGrams) },
-            { ownerId: productId, namespace: "custom", key: "making_charge", type: "number_decimal", value: String(makingCharge) },
-          ],
-        },
-      });
+        const mfRes = await client.graphql(metafieldsMutation, {
+          variables: {
+            metafields: [
+              { ownerId: productId, namespace: "custom", key: "metal_type", type: "single_line_text_field", value: metalType },
+              { ownerId: productId, namespace: "custom", key: "metal_purity", type: "number_decimal", value: String(metalPurity) },
+              { ownerId: productId, namespace: "custom", key: "weight_grams", type: "number_decimal", value: String(weightGrams) },
+              { ownerId: productId, namespace: "custom", key: "making_charge", type: "number_decimal", value: String(makingCharge) },
+            ],
+          },
+        });
 
-      if (mfRes.body.data.metafieldsSet.userErrors.length > 0) {
-        results.errors.push({ productId, error: mfRes.body.data.metafieldsSet.userErrors[0].message, code: "SHOPIFY_ERROR" });
-        continue;
+        const mfErrors = mfRes.body?.data?.metafieldsSet?.userErrors;
+        if (mfErrors && mfErrors.length > 0) {
+          results.errors.push({ productId, error: mfErrors[0].message, code: "SHOPIFY_ERROR" });
+          continue;
+        }
+
+        // 2. Add Tag
+        if (addTag) {
+          const tagMutation = `mutation AddTag($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { message } } }`;
+          await client.graphql(tagMutation, { variables: { id: productId, tags: ["auto_price_update"] } });
+        }
+
+        // 3. Upsert local record
+        const configData = { shopifyProductId: productId, shopifyVariantId: "", metalType, metalPurity, weightGrams, makingCharge, shop: session.shop };
+        await prisma.productConfig.upsert({
+          where: { shop_shopifyProductId_shopifyVariantId: { shop: session.shop, shopifyProductId: productId, shopifyVariantId: "" } },
+          update: configData,
+          create: configData,
+        });
+
+        results.configured++;
+      } catch (err) {
+        results.errors.push({ productId, error: "Internal error during configuration", code: "CONFIG_FAILED" });
       }
-
-      // 2. Add Tag
-      if (addTag) {
-        const tagMutation = `mutation AddTag($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { message } } }`;
-        await client.graphql(tagMutation, { variables: { id: productId, tags: ["auto_price_update"] } });
-      }
-
-      // 3. Upsert local record
-      const configData = { shopifyProductId: productId, shopifyVariantId: "", metalType, metalPurity, weightGrams, makingCharge, shop: session.shop };
-      await prisma.productConfig.upsert({
-        where: { shop_shopifyProductId_shopifyVariantId: { shop: session.shop, shopifyProductId: productId, shopifyVariantId: "" } },
-        update: configData,
-        create: configData,
-      });
-
-      results.configured++;
-    } catch (err) {
-      results.errors.push({ productId, error: "Internal error during configuration", code: "CONFIG_FAILED" });
     }
-  }
 
-  res.json(results);
+    res.json(results);
+  } catch (outerError) {
+    console.error("Unhandled error in /api/products/configure-bulk:", outerError);
+    res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+  }
 });
 
 app.post("/api/settings", async (req, res) => {
-  const shop = res.locals.shopify?.session?.shop;
-  let {
-    goldApiKey,
-    markupPercentage,
-    stopLossXAU,
-    stopLossXAG,
-    stopLossXPT,
-    stopLossXPD,
-    syncFrequencyMin,
-    isCronActive,
-    showPriceBreakup
-  } = req.body;
-
-  if (!shop) {
-    return res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
-  }
-
-  // Sanitization & Clamping
-  goldApiKey = typeof goldApiKey === 'string' ? goldApiKey.trim() : goldApiKey;
-  if (markupPercentage !== undefined) markupPercentage = Math.min(10000, Math.max(-100, parseFloat(markupPercentage)));
-  if (syncFrequencyMin !== undefined) syncFrequencyMin = Math.min(1440, Math.max(15, parseInt(syncFrequencyMin)));
-
-  if (goldApiKey !== undefined && !goldApiKey) {
-    return res.status(400).json({ error: "goldApiKey is required", code: "INVALID_INPUT" });
-  }
-
-  const validateStopLoss = (val) => val === null || val === undefined || (typeof val === 'number' && val >= 0);
-  if (![stopLossXAU, stopLossXAG, stopLossXPT, stopLossXPD].every(validateStopLoss)) {
-    return res.status(400).json({ error: "Stop-loss values must be positive numbers", code: "INVALID_INPUT" });
-  }
-
   try {
-    const updateData = {};
-    if (goldApiKey !== undefined) updateData.goldApiKey = encrypt(goldApiKey);
-    if (markupPercentage !== undefined) updateData.markupPercentage = markupPercentage;
-    if (stopLossXAU !== undefined) updateData.stopLossXAU = stopLossXAU || null;
-    if (stopLossXAG !== undefined) updateData.stopLossXAG = stopLossXAG || null;
-    if (stopLossXPT !== undefined) updateData.stopLossXPT = stopLossXPT || null;
-    if (stopLossXPD !== undefined) updateData.stopLossXPD = stopLossXPD || null;
-    if (syncFrequencyMin !== undefined) updateData.syncFrequencyMin = syncFrequencyMin;
-    if (showPriceBreakup !== undefined) updateData.showPriceBreakup = !!showPriceBreakup;
-    if (isCronActive !== undefined) updateData.isCronActive = !!isCronActive;
+    const shop = res.locals.shopify?.session?.shop;
+    let {
+      goldApiKey,
+      markupPercentage,
+      stopLossXAU,
+      stopLossXAG,
+      stopLossXPT,
+      stopLossXPD,
+      syncFrequencyMin,
+      isCronActive,
+      showPriceBreakup
+    } = req.body || {};
 
-    const settings = await prisma.merchantSettings.upsert({
-      where: { shop },
-      update: updateData,
-      create: { shop, ...updateData, goldApiKey: updateData.goldApiKey || "" },
-    });
+    if (!shop) {
+      return res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+    }
 
-    res.json(settings);
-  } catch (error) {
-    console.error("Error saving settings:", error);
-    res.status(500).json({ error: "Failed to save settings", code: "SAVE_FAILED" });
+    // Sanitization & Clamping
+    goldApiKey = typeof goldApiKey === 'string' ? goldApiKey.trim() : goldApiKey;
+    if (markupPercentage !== undefined) markupPercentage = Math.min(10000, Math.max(-100, parseFloat(markupPercentage)));
+    if (syncFrequencyMin !== undefined) syncFrequencyMin = Math.min(1440, Math.max(15, parseInt(syncFrequencyMin)));
+
+    if (goldApiKey !== undefined && !goldApiKey) {
+      return res.status(400).json({ error: "goldApiKey is required", code: "INVALID_INPUT" });
+    }
+
+    const validateStopLoss = (val) => val === null || val === undefined || (typeof val === 'number' && val >= 0);
+    if (![stopLossXAU, stopLossXAG, stopLossXPT, stopLossXPD].every(validateStopLoss)) {
+      return res.status(400).json({ error: "Stop-loss values must be positive numbers", code: "INVALID_INPUT" });
+    }
+
+    try {
+      const updateData = {};
+      if (goldApiKey !== undefined) updateData.goldApiKey = encrypt(goldApiKey);
+      if (markupPercentage !== undefined) updateData.markupPercentage = markupPercentage;
+      if (stopLossXAU !== undefined) updateData.stopLossXAU = stopLossXAU || null;
+      if (stopLossXAG !== undefined) updateData.stopLossXAG = stopLossXAG || null;
+      if (stopLossXPT !== undefined) updateData.stopLossXPT = stopLossXPT || null;
+      if (stopLossXPD !== undefined) updateData.stopLossXPD = stopLossXPD || null;
+      if (syncFrequencyMin !== undefined) updateData.syncFrequencyMin = syncFrequencyMin;
+      if (showPriceBreakup !== undefined) updateData.showPriceBreakup = !!showPriceBreakup;
+      if (isCronActive !== undefined) updateData.isCronActive = !!isCronActive;
+
+      const settings = await prisma.merchantSettings.upsert({
+        where: { shop },
+        update: updateData,
+        create: { shop, ...updateData, goldApiKey: updateData.goldApiKey || "" },
+      });
+
+      res.json(settings);
+    } catch (error) {
+      console.error("Error saving settings:", error);
+      res.status(500).json({ error: "Failed to save settings", code: "SAVE_FAILED" });
+    }
+  } catch (outerError) {
+    console.error("Unhandled error in /api/settings:", outerError);
+    res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
   }
 });
 
@@ -788,58 +803,63 @@ app.get("/api/formulas", async (req, res) => {
 });
 
 app.post("/api/formulas", async (req, res) => {
-  const shop = res.locals.shopify.session.shop;
-  const { id } = req.body;
-  let { name, formulaConfig, applyToTags, isDefault } = req.body;
-
-  // Sanitization
-  name = typeof name === 'string' ? name.trim() : name;
-  if (!name || !formulaConfig) {
-    return res.status(400).json({ error: "Name and formulaConfig are required", code: "INVALID_INPUT" });
-  }
-
-  let parsedConfig;
   try {
-    parsedConfig = typeof formulaConfig === 'string' ? JSON.parse(formulaConfig) : formulaConfig;
-  } catch (e) {
-    return res.status(400).json({ error: "Invalid JSON in formulaConfig", code: "INVALID_INPUT" });
-  }
+    const shop = res.locals.shopify.session.shop;
+    const { id } = req.body || {};
+    let { name, formulaConfig, applyToTags, isDefault } = req.body || {};
 
-  const validation = validateFormulaConfig(parsedConfig);
-  if (!validation.valid) {
-    return res.status(400).json({ error: "Invalid formula configuration", details: validation.errors, code: "INVALID_INPUT" });
-  }
-
-  try {
-    if (isDefault) {
-      await prisma.pricingFormula.updateMany({
-        where: { shop, isDefault: true },
-        data: { isDefault: false },
-      });
+    // Sanitization
+    name = typeof name === 'string' ? name.trim() : name;
+    if (!name || !formulaConfig) {
+      return res.status(400).json({ error: "Name and formulaConfig are required", code: "INVALID_INPUT" });
     }
 
-    const data = {
-      shop,
-      name,
-      formulaConfig: JSON.stringify(parsedConfig),
-      applyToTags: Array.isArray(applyToTags) ? applyToTags.join(',') : "",
-      isDefault: !!isDefault,
-    };
-
-    let formula;
-    if (id) {
-      formula = await prisma.pricingFormula.update({
-        where: { id, shop },
-        data,
-      });
-    } else {
-      formula = await prisma.pricingFormula.create({ data });
+    let parsedConfig;
+    try {
+      parsedConfig = typeof formulaConfig === 'string' ? JSON.parse(formulaConfig) : formulaConfig;
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON in formulaConfig", code: "INVALID_INPUT" });
     }
 
-    res.json(formula);
-  } catch (error) {
-    console.error("Error saving formula:", error);
-    res.status(500).json({ error: "Failed to save formula", code: "SAVE_FAILED" });
+    const validation = validateFormulaConfig(parsedConfig);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Invalid formula configuration", details: validation.errors, code: "INVALID_INPUT" });
+    }
+
+    try {
+      if (isDefault) {
+        await prisma.pricingFormula.updateMany({
+          where: { shop, isDefault: true },
+          data: { isDefault: false },
+        });
+      }
+
+      const data = {
+        shop,
+        name,
+        formulaConfig: JSON.stringify(parsedConfig),
+        applyToTags: Array.isArray(applyToTags) ? applyToTags.join(',') : "",
+        isDefault: !!isDefault,
+      };
+
+      let formula;
+      if (id) {
+        formula = await prisma.pricingFormula.update({
+          where: { id, shop },
+          data,
+        });
+      } else {
+        formula = await prisma.pricingFormula.create({ data });
+      }
+
+      res.json(formula);
+    } catch (error) {
+      console.error("Error saving formula:", error);
+      res.status(500).json({ error: "Failed to save formula", code: "SAVE_FAILED" });
+    }
+  } catch (outerError) {
+    console.error("Unhandled error in /api/formulas:", outerError);
+    res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
   }
 });
 

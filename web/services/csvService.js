@@ -19,6 +19,7 @@ export function parseProductConfigCSV(csvString) {
     const requiredMetals = ['XAU', 'XAG', 'XPT', 'XPD'];
 
     result.data.forEach((row, index) => {
+        if (!row || typeof row !== 'object') return;
         const rowNum = index + 2; // +1 for header, +1 for 1-based index
         const {
             product_id,

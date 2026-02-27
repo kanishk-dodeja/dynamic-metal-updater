@@ -120,8 +120,8 @@ async function ensureMetafieldDefinitions(client) {
 
   try {
     const response = await client.graphql(query);
-    const existingProductDefs = response.body.data.productDefs.edges.map(e => e.node);
-    const existingVariantDefs = response.body.data.variantDefs.edges.map(e => e.node);
+    const existingProductDefs = response.body?.data?.productDefs?.edges?.map(e => e.node) || [];
+    const existingVariantDefs = response.body?.data?.variantDefs?.edges?.map(e => e.node) || [];
     const existingDefinitions = [...existingProductDefs, ...existingVariantDefs];
 
     for (const def of METAFIELD_DEFINITIONS) {
@@ -137,7 +137,7 @@ async function ensureMetafieldDefinitions(client) {
           variables: { definition: def }
         });
 
-        const errors = createResponse.body.data.metafieldDefinitionCreate.userErrors;
+        const errors = createResponse.body?.data?.metafieldDefinitionCreate?.userErrors;
         if (errors && errors.length > 0) {
           console.error(`Failed to create metafield definition ${def.key} (${def.ownerType}):`, errors);
         }
@@ -159,7 +159,7 @@ async function getShopCurrency(client) {
 
   try {
     const response = await client.graphql(query);
-    return response.body.data.shop.currencyCode;
+    return response.body?.data?.shop?.currencyCode || null;
   } catch (error) {
     console.error("Error fetching shop currency:", error.message);
     return null;

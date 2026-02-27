@@ -5,6 +5,30 @@ export function getDashboardHtml() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MetalSync Dashboard</title>
+  <script src="https://unpkg.com/@shopify/app-bridge@3.7.8"></script>
+  <script src="https://unpkg.com/@shopify/app-bridge-utils@3.5.1"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const host = urlParams.get('host');
+      
+      if (host && window.top !== window.self) {
+        // App is stuck inside Shopify Admin iframe but is configured as non-embedded.
+        // Force break out using App Bridge:
+        const AppBridge = window['app-bridge'];
+        const actions = window['app-bridge'].actions;
+        
+        const app = AppBridge.default({
+          apiKey: document.querySelector('meta[name="shopify-api-key"]')?.content || "", // Will be gracefully handled if empty
+          host: host,
+          forceRedirect: true
+        });
+
+        const redirect = actions.Redirect.create(app);
+        redirect.dispatch(actions.Redirect.Action.REMOTE, window.location.href);
+      }
+    });
+  </script>
   <style>
     :root {
       --bg-color: #f6f6f7;
