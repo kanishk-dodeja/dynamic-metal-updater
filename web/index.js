@@ -18,6 +18,9 @@ import { getPrivacyPolicyHtml } from "./views/privacyPolicy.js";
 const prisma = new PrismaClient();
 export const app = express();
 
+// Required for Render/Shopify secure cookies
+app.set('trust proxy', 1);
+
 // Security Headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
