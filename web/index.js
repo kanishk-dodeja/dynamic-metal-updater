@@ -299,7 +299,10 @@ app.get(
     next();
   },
   (req, res) => {
-    res.redirect("/app");
+    const params = new URLSearchParams();
+    if (req.query.host) params.set('host', String(req.query.host));
+    if (req.query.shop) params.set('shop', String(req.query.shop));
+    res.redirect(`/app?${params.toString()}`);
   }
 );
 

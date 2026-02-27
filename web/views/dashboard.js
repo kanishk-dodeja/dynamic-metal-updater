@@ -1,9 +1,11 @@
 export function getDashboardHtml() {
+  const apiKey = process.env.SHOPIFY_API_KEY || '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="shopify-api-key" content="${apiKey}">
   <title>MetalSync Dashboard</title>
   <script src="https://unpkg.com/@shopify/app-bridge@3.7.8"></script>
   <script src="https://unpkg.com/@shopify/app-bridge-utils@3.5.1"></script>
